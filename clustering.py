@@ -5,11 +5,18 @@ import numpy as np  # noqa
 
 def nearest_depot(depots, customers):
     '''
-    returns an np.array of integers.
+    Finds the depot id that is closest to the customers.
+
+    returns an np.array of integers, where each integer represent
+    the index of the depot that is closest for the customer
     '''
-    D, C = depots, customers
+
+    depot_ids = depots[:, 0]
+    depot_coords = depots[:, [1, 2]]
 
     clf = sklearn.neighbors.NearestCentroid()
-    clf.fit(D[:,[1,2]], [0,1,2,3])
-    Y = clf.predict(C[:,[1,2]])
+    clf.fit(depot_coords, depot_ids)
+
+    customer_coords = customers[:, [1, 2]]
+    Y = clf.predict(customer_coords)
     return Y
