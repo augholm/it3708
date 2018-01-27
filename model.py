@@ -72,6 +72,7 @@ class MDVRPModel():
         returns: an individual
         '''
 
+<<<<<<< Updated upstream
 
         #Randomly select depot x in set of depots to undergo reproduction
         depot = np.random.choice(self.depots, 1)
@@ -130,3 +131,9 @@ model = MDVRPModel(customers, depots)
 model.generate_initial_population()
 for each in model.population:
     print(model.fitness_score(each))
+=======
+        C = self.customers
+        X = C[np.array(customer_ids) - 1][:, 4]
+        return X.sum()
+
+>>>>>>> Stashed changes

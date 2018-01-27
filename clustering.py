@@ -20,3 +20,5 @@ def nearest_depot(depots, customers):
     customer_coords = customers[:, [1, 2]]
     Y = clf.predict(customer_coords)
     return Y
+
+
