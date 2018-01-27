@@ -195,13 +195,50 @@ class MDVRPModel():
 
 
         #Randomly select depot x in set of depots to undergo reproduction
-        selected_depot = np.random.choice(self.depots, 1)
+        depot = np.random.choice(self.depots, 1)
 
-        #Randomly select one route from each parent
-        p1_routes = p1[selected_depot]
-        p1_routes = p2[selected_depot]
+        #Randomly select one route from each parent, p1_
+        p1_routes = p1.iter_paths(depot)
+        p2_routes = p2.iter_paths(depot)
 
-        #Randomly select a route in given depot from each parent
+        #randomly select a route in given depot from each parent
+        #routes now contain customers
+        p1_random_route = np.random.choice(p1_routes, 1)
+        p2_random_route = np.random.choice(p2_routes, 1)
+
+        #From p1, remove the customers belonging to the randomly selected
+        #route in p2
+
+        new_p1_rotes = self.delete_customer(p1_routes, p2_routes)
+
+        #From p1, remove the customers belonging to the randomly selected
+        #route in p2
+
+        new_p2_routes = self.delete_customer(p2_routes, p1_routes)
+
+
+
+
+
+    def delete_customer(self, p1_routes, p2_routes):
+        for customer in p2_routes:
+            np.delete(p1_routes, np.argwhere(p1_routes == customer))
+        return p1_routes
+
+
+    def insert_customer(self, new_p1_routes, p2_routes, prob):
+        if np.random.uniform(0,1) <= prob:
+           #reassign to best feasible location
+
+
+        else:
+            #reassing to any feasible location
+
+
+
+
+
+
 
 
 
