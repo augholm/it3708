@@ -70,10 +70,12 @@ class MDVRPModel():
             depot_id, max_load = d[0], d[7]
             while len(each) > 0:
                 customer_ids = []
+                # does this include multiple tours or a single tour??
                 while self.tour_required_capacity(customer_ids) < max_load and len(each) > 0:
                     new_customer = each[0]
                     each = each[1:]
                     customer_ids.append(new_customer)
+                    #customer_ids = [depot_id] + customer_ids + [depot_id]
                 routes[depot_id].append(customer_ids)  # maximal path found -- break
 
         '''
@@ -161,3 +163,32 @@ class MDVRPModel():
         C = self.customers
         X = C[np.array(customer_ids) - 1][:, 4]
         return X.sum()
+
+    def selection(k=3, n=10, p=0.8):
+        '''
+        A tournament selection strategy is used and we use elitist selection.
+
+        k: int, population size to consider in pool
+        n: int, population size used for breeding
+        p: float, probability of choosing best individual out of population, otherwise
+        random is chosen
+
+        returns: a list of size `n` of individuals
+        '''
+        L = []
+        for _ in range(n):
+            X = np.random.choice(self.population, k, replace=False)
+            scores = [(self.fitness_score(each), each) for each in X]
+            if np.random.uniform(0, 1) <= p:
+                L.append(min(scores, key=lambda x: x[0])[1])
+            else:
+                L.append(np.random.choice(X))
+        return L
+
+    def create_offspring(p1, p2):
+        '''
+        p1: individual, representing first parent
+        p2: individual, representing second parent
+
+        returns: an individual
+        '''
