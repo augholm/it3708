@@ -185,10 +185,24 @@ class MDVRPModel():
                 L.append(np.random.choice(X))
         return L
 
-    def create_offspring(p1, p2):
+    def create_offspring(self, p1, p2):
         '''
         p1: individual, representing first parent
         p2: individual, representing second parent
 
         returns: an individual
         '''
+
+
+        #Randomly select depot x in set of depots to undergo reproduction
+        selected_depot = np.random.choice(self.depots, 1)
+
+        #Randomly select one route from each parent
+        p1_routes = p1[selected_depot]
+        p1_routes = p2[selected_depot]
+
+        #Randomly select a route in given depot from each parent
+
+
+
+
