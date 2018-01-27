@@ -121,3 +121,56 @@ class Individual():
         C = self.customers
         X = C[np.array(tour) - 1][:, 4]
         return X.sum()
+
+    def move_customer(self, customer_id):
+        cid = customer_id
+
+        # step 1: find the customer in the path
+        found = False
+        for d_idx in self.iter_depots():
+            for p_idx, path in enumerate(self.iter_paths(d_idx)):
+                if cid in path:
+                    found = True
+                    break
+            if found:
+                break
+
+        self.tours[d_idx][p_idx] = np.delete(self.tours[d_idx][p_idx], cid)
+
+        # step 2: find somewhere to put this boy
+        customer = utils.get_by_ids(self.customers, cid)
+        demand = customer[3]
+        L = []
+        '''
+        We know for sure that the path is at least as good as the initial path.
+        '''
+        for d_idx in self.iter_depots():
+            carry_lim = utils.get_by_ids(self.depots, d_idx)[7]
+
+            for p_idx, path in enumerate(self.iter_paths(d_idx)):
+                if self.capacity_requirement(path) + demand < carry_lim:
+                    path_candidate = self.optimally_insert(path, customer)
+                    score = self.path_cost(path_candidate)
+                    L.append((score, d_idx, p_idx, path_candidate))
+
+        min_score, min_d_idx, min_p_idx, path = min(L, key=lambda x: score)
+        if self.verbose:
+            print(f'smallest path was found in department {min_d_idx} with score {min_score}')
+
+        self.tours[min_d_idx][min_p_idx] = path
+
+    def optimally_insert(self, path, customer):
+        pass
+
+    def path_cost(self, path):
+        '''
+        Path is a sequence of customer (and depot) ids
+        '''
+        locs = np.vstack([
+            self.customers[:, [0, 1, 2]],
+            self.depots[:, [0, 1, 2]]
+            ])
+        xy_sequence = utils.get_by_ids(locs, path)[:, [1, 2]]
+        return utils.euclidean_dist(xy_sequence)
+        
+
