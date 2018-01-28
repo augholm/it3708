@@ -28,15 +28,9 @@ class MDVRPModel():
     def fitness_score(self, individual):
         total_dist = 0
 
-        locs = np.vstack([
-            self.customers[:, [0, 1, 2]],
-            self.depots[:, [0, 1, 2]]
-            ])
-
         for depot_id in individual.iter_depots():
             for path in individual.iter_paths(depot_id, True):
-                xy_sequence = utils.get_by_ids(locs, path)[:, [1, 2]]
-                total_dist += utils.euclidean_dist(xy_sequence)
+                total_dist += individual.path_cost(path)
 
         return total_dist
 
@@ -71,8 +65,6 @@ class MDVRPModel():
 
         returns: an individual
         '''
-
-<<<<<<< Updated upstream
 
         #Randomly select depot x in set of depots to undergo reproduction
         depot = np.random.choice(self.depots, 1)
@@ -127,13 +119,22 @@ class MDVRPModel():
 
 
 
-model = MDVRPModel(customers, depots)
-model.generate_initial_population()
-for each in model.population:
-    print(model.fitness_score(each))
-=======
-        C = self.customers
-        X = C[np.array(customer_ids) - 1][:, 4]
-        return X.sum()
+    def mutation(self, individual):
+        def reversal_mutation():
+            depot_ids = individual.depots[:, 0]
+            idx = np.random.choice(depot_ids)
+            path_no = np.random.choice(range(len(individual.tours[idx])))
+            path = individual.tours[idx][path_no]
+            
+            a, b = np.random.choice(range(len(path)), 2, replace=False)
+            a, b = min(a, b), max(a, b)
+            path[a:b] = path[b-1:a-1:-1]
+            individual.tours[idx][path_no] = path
 
->>>>>>> Stashed changes
+        def single_customer_rerouting()
+
+            chosen_path = np.random.choice(tours[chosen_depot])
+            depots = np.random.choice(individual.iter_depots
+            individual.random.choice(
+
+        pass
