@@ -1,21 +1,24 @@
-import collections
 import numpy as np
-import clustering
 import utils
 import sample
+import matplotlib.pyplot as plt
+plt.ion()
 
 
 class MDVRPModel():
-    def __init__(self, customers, depots, verbose=True):
+    def __init__(self, customers, depots, generate_initial_population=True):
         '''
         depots: np.array of shape (N, 8) where there are N depots
         customers: np.array of shape (M, 5) where there are M customers.
         verbose: boolean, whether verbose output (prints) should be used or not
+
+        TODO: add config support so we can add tweakings to the model
         '''
         self.depots = depots
-        self.verbose = verbose
         self.customers = customers
         self.population = []
+        if generate_initial_population:
+            self.generate_initial_population()
 
     def generate_initial_population(self, n=100):
         '''
@@ -29,12 +32,12 @@ class MDVRPModel():
         total_dist = 0
 
         for depot_id in individual.iter_depots():
-            for path in individual.iter_paths(depot_id, True):
+            for path in individual.iter_paths(depot_id, include_depot=True):
                 total_dist += individual.path_cost(path)
 
         return total_dist
 
-    def selection(k=3, n=10, p=0.8):
+    def selection(self, k=3, n=10, p=0.8):
         '''
         A tournament selection strategy is used and we use elitist selection.
 
@@ -55,9 +58,6 @@ class MDVRPModel():
                 L.append(np.random.choice(X))
         return L
 
-
-
-
     def create_offspring(self, p1, p2):
         '''
         p1: individual, representing first parent
@@ -66,8 +66,13 @@ class MDVRPModel():
         returns: an individual
         '''
 
+        # TODO: implement this boy
+        # Notice there are a lot of utility functions available in
+        # sample.py and utils.py now :)
+        import copy
+        return copy.deepcopy(np.random.choice([p1, p2]))
         #Randomly select depot x in set of depots to undergo reproduction
-        depot = np.random.choice(self.depots, 1)
+        depot = np.random.choice(self.depots[:, 0], 1)
 
         #Randomly select one route from each parent, p1_
         p1_routes = p1.iter_paths(depot)
@@ -114,27 +119,139 @@ class MDVRPModel():
 
         return new_p1_routes
 
+    def mutation(self, individual, intra_depot=True):
+        '''
+        Apply a mutation. Randomly choose between three different kinds of mutations.
 
+        individual: The individual that the mutation will be applied to
+        intra_depot: boolean, if True then the mutation will only affect tours within the
+        same depot. Otherwise will consider all tours.
 
+        '''
 
-
-
-    def mutation(self, individual):
         def reversal_mutation():
-            depot_ids = individual.depots[:, 0]
-            idx = np.random.choice(depot_ids)
-            path_no = np.random.choice(range(len(individual.tours[idx])))
-            path = individual.tours[idx][path_no]
-            
+            '''
+            Finds a random path. Then reverses a subpath in that path.
+
+            Example:
+                6 9 5 4 7 2
+                reverse around index 1 and before index 4:
+                --> 6 4 5 9 7 2
+            '''
+
+            try:
+                depot_id, path_id, path = utils.choose_random_paths(
+                    individual, n=1, min_length=2, include_indices=True,
+                    depot_id='random' if intra_depot else 'all')[0]
+            except utils.NoPathFoundException:
+                print('found no path')
+                return
+
             a, b = np.random.choice(range(len(path)), 2, replace=False)
             a, b = min(a, b), max(a, b)
-            path[a:b] = path[b-1:a-1:-1]
-            individual.tours[idx][path_no] = path
+            path[a:b] = path[a:b][::-1]
+            individual.tours[depot_id][path_id] = path
 
-        def single_customer_rerouting()
+        def single_customer_rerouting():
+            '''
+            From the paper:
 
-            chosen_path = np.random.choice(tours[chosen_depot])
-            depots = np.random.choice(individual.iter_depots
-            individual.random.choice(
+            "Re-routing involves randomly selecting one customer, and removing
+            that customer from the existing route. The customer is then
+            inserted in the best feasible insertion location within the entire
+            chromosome. This involves computing the total cost of insertion at
+            every insertion locale, which finally re-inserts the customer in
+            the most feasible location."
 
-        pass
+            returns: None, but moves a (random) customer to a different route.
+            '''
+
+            customer_id = np.random.choice(individual.customers[:, 0])
+            individual.move_customer(customer_id, intra_depot=intra_depot)
+
+        def swapping():
+            '''
+            From the paper:
+
+            This simple mutation operator selects two random routes and swaps one
+            randomly chosen customer from one route to another
+            '''
+
+            depot_id = utils.choose_random_depot(individual,
+                                                 min_num_paths=2)
+
+            try:
+                (d_idx1, p_idx1, p1), (d_idx2, p_idx2, p2) = utils.choose_random_paths(
+                    individual, n=2, depot_id=depot_id, include_indices=True, include_depot=False)
+            except utils.NoPathFoundException:
+                print('found no path!! in swapping')
+                return
+
+            c1 = np.random.choice(p1)
+            c2 = np.random.choice(p2)
+
+            p1 = utils.delete_by_value(p1, c1)
+            p2 = utils.delete_by_value(p2, c2)
+
+            def insert_randomly(arr, elem):
+                n = len(arr)
+                return np.insert(arr, np.random.choice(range(n + 1)), elem)
+
+            individual.tours[d_idx1][p_idx1] = insert_randomly(p1, c2)
+            individual.tours[d_idx2][p_idx2] = insert_randomly(p2, c1)
+
+        id = np.random.choice((0, 1, 2))
+        if id == 0:
+            reversal_mutation(),
+        if id == 1:
+            single_customer_rerouting(),
+        if id == 2:
+            swapping()
+
+    def run_step(self, generation_step):
+        '''
+        TODO: fix parameter sizes and stuff
+        e.g the population size
+        '''
+
+        individuals = self.selection()
+        new_offspring = []
+        p1, p2 = np.random.choice(individuals, 2)
+        while True:
+            offspring = self.create_offspring(p1, p2)
+            intra_depot = True if generation_step % 10 == 0 else False
+            self.mutation(offspring, intra_depot=intra_depot)
+            if offspring.is_in_feasible_state():
+                new_offspring.append(offspring)
+                if len(new_offspring) == 10:
+                    break
+
+        population_size = len(self.population)
+        new_generation = np.random.choice(
+            np.concatenate([new_offspring, self.population]),
+            size=population_size)
+
+        self.population = new_generation
+
+    def evolve(self, n_steps=1000, visualize_step=None):
+        min_scores = []
+        mean_scores = []
+        fig, (ax0, ax1) = plt.subplots(1, 2)
+        for i in range(n_steps):
+            self.run_step(i)
+            data = [(each, self.fitness_score(each)) for each in self.population]
+            fittest, score = min(data, key=lambda x: x[1])
+            scores = [each[1] for each in data]
+            ms = np.mean(scores)
+            min_scores.append(min(scores))
+            mean_scores.append(ms)
+
+            if visualize_step is not None and i % visualize_step == 0:
+                fittest.visualize(ax=ax0, title=i)
+
+            ax1.cla()
+            ax1.plot(min_scores, label='min score')
+            ax1.plot(mean_scores, label='mean score')
+            ax1.legend()
+            plt.pause(0.05)
+            print(f'min score in step {i} is {score} and mean is {ms}')

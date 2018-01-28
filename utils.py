@@ -5,6 +5,23 @@ import numpy as np
 import pandas as pd
 
 
+class NoPathFoundException(Exception):
+    pass
+
+
+def delete_by_value(arr, value):
+    '''
+    Returns an array where all instances of `value` in `arr` are gone
+    '''
+    arr = np.array(arr)
+    return np.delete(arr, np.argwhere(arr == value))
+
+
+def flatten(iterable):
+    flat_list = [item for sublist in iterable for item in sublist]
+    return flat_list
+
+
 def is_iterable(obj):
     try:
         iter(obj)
@@ -41,6 +58,7 @@ def get_by_ids(data, id):
 
 
 def visualize_closest_depot(customers, depots, ax=None):
+    # TODO: remove soon
     if ax is not None:
         plt.sca(ax)
     plt.clf()
@@ -62,35 +80,80 @@ def visualize_closest_depot(customers, depots, ax=None):
     plt.scatter(xx.ravel(), yy.ravel(), c=Z, alpha=0.1)
 
 
-def visualize_chromosome(chromosome, customers, depots, ax=None):
-    if ax is not None:
-        plt.sca(ax)
-    plt.clf()
-    visualize_closest_depot(customers, depots)
+def choose_random_paths(individual, n=1, min_length=1, depot_id=None, include_indices=False, include_depot=False):
+    '''
+    From an individual, choose random `n` random paths each with length at
+    least `min_length`.
 
-    D, C = depots, customers
-    locs = np.vstack([
-        customers[:, [0, 1, 2]],
-        depots[:, [0, 1, 2]]
-        ])
-    cmap = 'r g b y m'.split()
-    for tour, dept_id in zip(chromosome, depots[:, 0]):
-        tour = np.array(tour)
-        for subtour, c in zip(np.split(tour, np.where(tour == 0)[0]),cmap):
-            if len(subtour) == 0:
-                continue
-            subtour[0] = dept_id
-            subtour = np.array(subtour.tolist() + [dept_id])
-            X = get_by_ids(locs, subtour)[:, [1, 2]]
-            print(c)
-            plt.plot(X[:,0], X[:,1], c, alpha=0.3)
+    depot_id can be one of:
+        int           if a signle depot is considered
+        array-like    if multiple depots are considered
+        'random'      if a random depot is considered
+        None or 'all' if all depots are considered
 
+    include_indices, Boolean. If True then will return an array consisting
+    of tuples (d_idx, p_idx, path)
+
+    include_depot, Boolean. If True then each path will be prepended
+    and appended with the depot index.
+
+    raises NoPathFoundException if no path filling the requirements
+    are found.
+
+    returns a list of paths or a list of tuples (d_idx, p_idx, path)
+    '''
+
+    if depot_id == 'random':
+        g = [choose_random_depot(individual)]
+    elif type(depot_id) != str and is_iterable(depot_id):
+        g = depot_id
+    elif depot_id is None or depot_id == 'all':
+        g = [e for e in individual.iter_depots()]
+    elif not is_iterable(depot_id):  # must be an iterable
+        g = [depot_id]
+
+    X = []
+    for depot_id in g:
+        for x in individual.iter_paths(depot_id,
+                                       include_indices=include_indices,
+                                       include_depot=include_depot):
+            if include_indices:
+                _, _, path = x
+            else:
+                path = x
+            if len(path) >= min_length:
+                X.append(x)
+
+    if len(X) < n:  # TODO: consider raising if zero has been found instead of `n`?
+        raise NoPathFoundException()
+
+    indices = np.random.choice(range(len(X)), size=n, replace=False)
+    return [X[idx] for idx in indices]
+
+
+def choose_random_depot(individual, n_depots=1, min_num_paths=1):
+    '''
+    From an individual, randomly chooses a depot that has at least `min_num_paths` in it.
+    This is the same as requiring that you have at least `min_num_paths` trucks on that depot.
+
+    returns an int if n_depots=1, otherwise an np.array of ints of size `n_depots`
+
+    '''
+    candidates = []
+    for depot_id in individual.iter_depots():
+        if len([_ for _ in individual.iter_paths(depot_id)]) >= min_num_paths:
+            candidates.append(depot_id)
+
+    if n_depots == 1:
+        return np.random.choice(candidates)
+    else:
+        return np.random.choice(candidates, size=n_depots)
 
 
 def euclidean_dist(X):
     '''
     X: np.array of shape (N, d) where d is the dimensionality (e.g in 2D-case d=2)
-    and N is the number of points. 
+    and N is the number of points.
 
     Calculates the total distance if straight lines were drawn between each
     subsequent point.

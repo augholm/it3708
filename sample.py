@@ -1,8 +1,12 @@
+import matplotlib.pyplot as plt
+from cycler import cycler
 import numpy as np
 import utils
 import collections
 import clustering
 
+np.random.seed(1)
+plt.ion()
 
 class Individual():
     def __init__(self, customers, depots, initialize=True):
@@ -35,7 +39,7 @@ class Individual():
         '''
         Y = clustering.nearest_depot(self.depots, self.customers)
 
-        def split_to_paths(sequence, carry_limit):
+        def split_to_paths(sequence, depot_id, carry_limit):
             '''
             sequence: list of customer indices
 
@@ -45,41 +49,58 @@ class Individual():
             all_tours = []
             subtour = []
             for entry in sequence:
-                if self.capacity_requirement(subtour + [entry]) < carry_limit:
+                roundtrip = [depot_id] + subtour + [entry, depot_id]
+                if self.capacity_requirement(roundtrip) < carry_limit:
                     subtour.append(entry)
                 else:
                     all_tours.append(subtour)
-                    subtour = []
-            return all_tours + subtour
+                    subtour = [entry]
+            if len(subtour) == 0:
+                return all_tours
+            else:
+                return all_tours + [subtour]
 
         for dept_id, carry_limit in self.depots[:, [0, 7]]:
             assignment = self.customers[Y == dept_id][:, 0]
-            self.tours[dept_id] = split_to_paths(np.random.permutation(assignment),
-                                                 carry_limit)
+            A = np.random.permutation(assignment)
+            X = split_to_paths(A, dept_id, carry_limit)
+            self.tours[dept_id] = X
+                                                 
+            if not self.is_in_feasible_state():
+                import pdb; pdb.set_trace()
 
-    def iter_paths(self, depot_id, include_depot_at_start_and_end=False):
+
+    def iter_paths(self, depot_id, include_indices=False, include_depot=False):
         '''
-        include_depot_at_start_and_end: boolean, if true then also include the
+        include_indices, boolean. If True then will also yield the depot_id and
+        index of the specific path as a tuple. Otherwise only returns the path.
+
+        include_depot: boolean, if true then also include the
         depot id in the beginning / end
 
         Usage:
             I = Individual(customers, depots)
-            for tour in I.iter_paths(52, include_depot_at_start_and_end=False):
+            for tour in I.iter_paths(52, include_depot=False):
                 >> [42, 65, 24]
                 >> [38, 66, 12]
                 >> ...
 
-            for tour in I.iter_paths(52, include_depot_at_start_and_end=True):
+            for tour in I.iter_paths(52, include_depot=True):
                 >> [52, 42, 65, 24, 52]
                 >> [52, 38, 66, 12, 52]
                 >> ...
 
         '''
-        for tour in self.tours[depot_id]:
+        for path_id, tour in enumerate(self.tours[depot_id]):
             if not utils.is_iterable(tour):
                 tour = [tour]
-            if include_depot_at_start_and_end:
-                yield [depot_id] + tour + [depot_id]
+            if include_depot:
+                tour = np.hstack([np.array([depot_id]), np.array(tour), np.array([depot_id])])
+            else:
+                tour = np.array(tour)
+
+            if include_indices:
+                yield depot_id, path_id, tour
             else:
                 yield tour
         pass
@@ -118,53 +139,103 @@ class Individual():
         if len(tour) == 0:
             return 0
 
-        C = self.customers
-        X = C[np.array(tour) - 1][:, 4]
-        return X.sum()
+        stacked = np.vstack([
+            self.customers[:, [0, 4]],
+            self.depots[:, [0, 4]],
+            ])
+        capacities = utils.get_by_ids(stacked, tour)
+        if len(capacities.shape) == 1:
+            return capacities[1]
+        else:
+            return capacities[:, 1].sum()
 
-    def move_customer(self, customer_id):
-        cid = customer_id
-
-        # step 1: find the customer in the path
-        found = False
+    def _find_customer(self, customer_id):
+        '''
+        Returns the path index and depot index that the given customer is on.
+        '''
         for d_idx in self.iter_depots():
             for p_idx, path in enumerate(self.iter_paths(d_idx)):
-                if cid in path:
-                    found = True
-                    break
-            if found:
-                break
+                if customer_id in path:
+                    return (d_idx, p_idx)
 
-        self.tours[d_idx][p_idx] = np.delete(self.tours[d_idx][p_idx], cid)
+    def move_customer(self, customer_id, intra_depot=True):
+        '''
+        Moves a single customer (given customer_id) to a different (and
+        feasible) path such that the the insertion of the customer on that
+        path gives the greatest cost reduction.
+
+        returns: nothing, but self.routes are changed
+        '''
+        # step 1: find the customer and remove it from the current tour
+        d_idx, p_idx = self._find_customer(customer_id)
+        path_with_customer = np.array(self.tours[d_idx][p_idx])
+        path_without_customer = utils.delete_by_value(path_with_customer, customer_id)
+
+        self.tours[d_idx][p_idx] = path_without_customer
+        _p_idx = p_idx
 
         # step 2: find somewhere to put this boy
-        customer = utils.get_by_ids(self.customers, cid)
-        demand = customer[3]
+        customer = utils.get_by_ids(self.customers, customer_id)
+        demand = customer[4]
         L = []
-        '''
-        We know for sure that the path is at least as good as the initial path.
-        '''
-        for d_idx in self.iter_depots():
+
+        g = [d_idx] if intra_depot else self.iter_depots()
+        for d_idx in g:
             carry_lim = utils.get_by_ids(self.depots, d_idx)[7]
 
-            for p_idx, path in enumerate(self.iter_paths(d_idx)):
-                if self.capacity_requirement(path) + demand < carry_lim:
-                    path_candidate = self.optimally_insert(path, customer)
+            for p_idx, path in enumerate(self.iter_paths(d_idx, include_depot=True)):
+                if self.capacity_requirement(path) + demand <= carry_lim:
+                    path_candidate = self.optimally_insert(path, customer_id)
                     score = self.path_cost(path_candidate)
                     L.append((score, d_idx, p_idx, path_candidate))
 
-        min_score, min_d_idx, min_p_idx, path = min(L, key=lambda x: score)
-        if self.verbose:
-            print(f'smallest path was found in department {min_d_idx} with score {min_score}')
+        if len(L) == 0:
+            import pdb;pdb.set_trace() # should never occur...
 
+        min_score, min_d_idx, min_p_idx, path = min(L, key=lambda x: score)
+
+        path = path[1:-1]  # cut away the beginning / end
         self.tours[min_d_idx][min_p_idx] = path
 
-    def optimally_insert(self, path, customer):
-        pass
+    def optimally_insert(self, path, customer_id):
+        '''
+        Given a specific path and a customer_id, we want to determine _where_ in the
+        chosen path that is the best to put it in
+
+        Example:
+            path = [50, 1, 2, 3, 50]
+            customer_id = 25
+            
+            considers:
+                min([cost([50, 25, 1, 2, 3, 50]),
+                     cost([50, 1, 25, 2, 3, 50]),
+                     cost([50, 1, 2, 25, 3, 50]),
+                     cost([50, 1, 2, 3, 25, 50]))
+                and return the minimum of these, e.g [50, 1, 25, 2, 3, 50], if
+                that has the lowest cost
+
+        '''
+        path = np.array(path)
+
+        scores, paths = [], []
+        for i in range(1, len(path)):
+            p = np.hstack([path[:i],
+                           customer_id,
+                           path[i:]])
+            paths.append(p)
+            scores.append(self.path_cost(p))
+
+        return min(zip(scores, paths), key=lambda x: x[0])[1]
 
     def path_cost(self, path):
         '''
         Path is a sequence of customer (and depot) ids
+
+        The path should include the depots as well.
+        Example:
+            path = [50, 12, 24, 51] where the depot is index 51.
+
+        returns: a float
         '''
         locs = np.vstack([
             self.customers[:, [0, 1, 2]],
@@ -172,5 +243,67 @@ class Individual():
             ])
         xy_sequence = utils.get_by_ids(locs, path)[:, [1, 2]]
         return utils.euclidean_dist(xy_sequence)
-        
 
+    def iter_all_paths(self, include_indices=False, include_depot=False):
+        '''
+        generator function that yields all paths in `self.routes`.
+
+        include_indices, boolean. If True then will also yield the depot_id and
+        index of the specific path as a tuple. Otherwise only returns the path.
+
+        include_depot, boolean. If True then will include the depot index in the
+        beginning and end of each path. E.g the path [5, 2, 1] becomes
+        [51, 5, 2, 1, 52] where 52 is a specific depot index.
+        '''
+        for d in self.iter_depots():
+            for i, each in enumerate(self.iter_paths(d, include_depot=include_depot)):
+                if include_indices:
+                    yield d, i, each
+                else:
+                    yield each
+
+    def is_in_feasible_state(self):
+        for d_idx, p_idx, path in self.iter_all_paths(include_indices=True, include_depot=True):
+            carry_limit = utils.get_by_ids(self.depots, d_idx)[7]
+            if self.capacity_requirement(path) > carry_limit:
+                return False
+
+        return True
+
+
+    '''
+    Visualization stuff
+    '''
+    def visualize(self, ax=None, title=None):
+        if ax is None:
+            ax = plt.gca()
+        ax.clear()
+        #plt.clf()
+        ax.set_prop_cycle(cycler('linestyle', '- -- : -.'.split()))
+
+        locs = np.vstack([
+            self.customers[:, [0, 1, 2]],
+            self.depots[:, [0, 1, 2]]])
+
+        ax.scatter(self.depots[:, 1], self.depots[:, 2], c='r', marker='*')
+        ax.scatter(self.customers[:, 1], self.customers[:, 2], c='b', marker='.')
+
+        #ax.set_color_cycle(['yellow', 'green', 'magenta', 'brown', 'orange'])
+        for color, depot_id in zip('c m y k r g b'.split(), self.iter_depots()):
+            for path in self.iter_paths(depot_id, include_depot=True):
+                xy_coords = utils.get_by_ids(locs, path)[:, [1, 2]]
+                ax.plot(xy_coords[:, 0], xy_coords[:, 1], color, alpha=0.3)
+        if title is not None:
+            ax.set_title(title)
+
+
+
+# I = Individual(customers, depots)
+# I.visualize()
+# # print(model.fitness_score(I))
+# # 
+# print(model.fitness_score(I))
+# for i in range(1, 50):
+#     I.move_customer(i)
+# print(model.fitness_score(I))
+# I.visualize()
