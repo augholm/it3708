@@ -1,16 +1,20 @@
+#######################################################################
+#                       Ex 1 in bio-inspired
+#                       August Holm & Mikael Kvalvaer
+#######################################################################
+
 import loader
 import numpy as np  # noqa
-import utils
-import sample
 from model import MDVRPModel
 import matplotlib.pyplot as plt
+import parser
 plt.ion()
 
 filename = 'data/problem/p01'
 depots, customers = loader.load_dataset(filename)
 
-model = MDVRPModel(customers, depots, generate_initial_population=True)
+conf = parser.parse_config('configs/default.conf')
+# conf['lala']
 
-plt.gcf().close()
-model.evolve(visualize_step=1)
-plt.clf()
+model = MDVRPModel(customers, depots, conf)
+#model.evolve(visualize_step=10)

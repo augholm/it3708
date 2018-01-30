@@ -4,20 +4,22 @@ import numpy as np
 import utils
 import collections
 import clustering
+L = []
 
-np.random.seed(1)
 plt.ion()
 
 class Individual():
-    def __init__(self, customers, depots, initialize=True):
+    def __init__(self, customers, depots, initialize=True, path_cost_dict={}):
         '''
         customers: np.array representing the customers
         depots: np.array representing the depots
         initialize: boolean, if True will call self.generate_initial_state
+        path_cost_dict: used to optimize path_cost
         '''
         self.customers = customers
         self.depots = depots
         self.tours = collections.defaultdict(lambda: [])
+        self.path_cost_dict = path_cost_dict
         if initialize:
             self.generate_initial_state()
 
@@ -65,10 +67,6 @@ class Individual():
             A = np.random.permutation(assignment)
             X = split_to_paths(A, dept_id, carry_limit)
             self.tours[dept_id] = X
-                                                 
-            if not self.is_in_feasible_state():
-                import pdb; pdb.set_trace()
-
 
     def iter_paths(self, depot_id, include_indices=False, include_depot=False):
         '''
@@ -158,7 +156,7 @@ class Individual():
                 if customer_id in path:
                     return (d_idx, p_idx)
 
-    def move_customer(self, customer_id, intra_depot=True):
+    def move_customer(self, customer_id, intra_depot=True, stochastic_choice=False):
         '''
         Moves a single customer (given customer_id) to a different (and
         feasible) path such that the the insertion of the customer on that
@@ -172,7 +170,6 @@ class Individual():
         path_without_customer = utils.delete_by_value(path_with_customer, customer_id)
 
         self.tours[d_idx][p_idx] = path_without_customer
-        _p_idx = p_idx
 
         # step 2: find somewhere to put this boy
         customer = utils.get_by_ids(self.customers, customer_id)
@@ -185,22 +182,24 @@ class Individual():
 
             for p_idx, path in enumerate(self.iter_paths(d_idx, include_depot=True)):
                 if self.capacity_requirement(path) + demand <= carry_lim:
-                    path_candidate = self.optimally_insert(path, customer_id)
+                    path_candidate = self.optimally_insert(path, customer_id,
+                                                           stochastic_choice=stochastic_choice)
                     score = self.path_cost(path_candidate)
                     L.append((score, d_idx, p_idx, path_candidate))
 
-        if len(L) == 0:
-            import pdb;pdb.set_trace() # should never occur...
 
-        min_score, min_d_idx, min_p_idx, path = min(L, key=lambda x: score)
+        min_score, min_d_idx, min_p_idx, path = min(L, key=lambda x: x[0])
 
         path = path[1:-1]  # cut away the beginning / end
         self.tours[min_d_idx][min_p_idx] = path
 
-    def optimally_insert(self, path, customer_id):
+    def optimally_insert(self, path, customer_id, stochastic_choice=False):
         '''
         Given a specific path and a customer_id, we want to determine _where_ in the
         chosen path that is the best to put it in
+
+        stochastic_choice: boolean, if True then choose randomly, but weighted
+        by the score (the better score --> more likely to choose it).
 
         Example:
             path = [50, 1, 2, 3, 50]
@@ -216,16 +215,21 @@ class Individual():
 
         '''
         path = np.array(path)
+        L = len(path)
 
-        scores, paths = [], []
-        for i in range(1, len(path)):
-            p = np.hstack([path[:i],
-                           customer_id,
-                           path[i:]])
-            paths.append(p)
-            scores.append(self.path_cost(p))
+        indices = np.arange(1, L**2 - 2, L+1)
+        X = np.vstack([path] * (L-1))
+        path_cands = np.insert(X, indices, customer_id).reshape([-1, L+1])
+        '''
+        How to properly select here??
+        '''
+        costs = np.apply_along_axis(self.path_cost, 1, path_cands)
+        if stochastic_choice:
+            path_id = np.random.choice(costs.argsort()[:3])  # choose among top 3
+        else:
+            path_id = costs.argmin()
 
-        return min(zip(scores, paths), key=lambda x: x[0])[1]
+        return path_cands[path_id, :]
 
     def path_cost(self, path):
         '''
@@ -237,12 +241,19 @@ class Individual():
 
         returns: a float
         '''
+        spath = path.tostring()
+        if spath in self.path_cost_dict:
+            return self.path_cost_dict[spath]
+
         locs = np.vstack([
             self.customers[:, [0, 1, 2]],
             self.depots[:, [0, 1, 2]]
             ])
         xy_sequence = utils.get_by_ids(locs, path)[:, [1, 2]]
-        return utils.euclidean_dist(xy_sequence)
+
+        cost = utils.euclidean_dist(xy_sequence)
+        self.path_cost_dict[spath] = cost
+        return cost
 
     def iter_all_paths(self, include_indices=False, include_depot=False):
         '''
@@ -295,15 +306,3 @@ class Individual():
                 ax.plot(xy_coords[:, 0], xy_coords[:, 1], color, alpha=0.3)
         if title is not None:
             ax.set_title(title)
-
-
-
-# I = Individual(customers, depots)
-# I.visualize()
-# # print(model.fitness_score(I))
-# # 
-# print(model.fitness_score(I))
-# for i in range(1, 50):
-#     I.move_customer(i)
-# print(model.fitness_score(I))
-# I.visualize()

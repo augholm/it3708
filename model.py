@@ -6,7 +6,7 @@ plt.ion()
 
 
 class MDVRPModel():
-    def __init__(self, customers, depots, generate_initial_population=True):
+    def __init__(self, customers, depots, conf):
         '''
         depots: np.array of shape (N, 8) where there are N depots
         customers: np.array of shape (M, 5) where there are M customers.
@@ -17,15 +17,18 @@ class MDVRPModel():
         self.depots = depots
         self.customers = customers
         self.population = []
-        if generate_initial_population:
-            self.generate_initial_population()
+        self.conf = conf
 
-    def generate_initial_population(self, n=100):
+        if conf['generate_initial_population']:
+            self.generate_initial_population(conf['population_size'])
+
+    def generate_initial_population(self, n, add_path_cost_dict=True):
         '''
         Makes the initial population and stores it in `self.population`.
 
         '''
-        self.population = [sample.Individual(self.customers, self.depots)
+        self.path_cost_dict = {}
+        self.population = [sample.Individual(self.customers, self.depots, path_cost_dict=self.path_cost_dict)
                            for _ in range(n)]
 
     def fitness_score(self, individual):
@@ -37,7 +40,7 @@ class MDVRPModel():
 
         return total_dist
 
-    def selection(self, k=3, n=10, p=0.8):
+    def selection(self, p=0.8):
         '''
         A tournament selection strategy is used and we use elitist selection.
 
@@ -48,6 +51,10 @@ class MDVRPModel():
 
         returns: a list of size `n` of individuals
         '''
+        k = self.conf['tournament_size']
+        n = self.conf['breeding_pool']
+        p = self.conf['tournament_best_prob']
+
         L = []
         for _ in range(n):
             X = np.random.choice(self.population, k, replace=False)
@@ -65,11 +72,23 @@ class MDVRPModel():
 
         returns: an individual
         '''
-
-        # TODO: implement this boy
-        # Notice there are a lot of utility functions available in
-        # sample.py and utils.py now :)
         import copy
+        child = copy.deepcopy(p1)
+
+        depot_id = utils.choose_random_depot(p1, n_depots=1)
+        path_1 = utils.choose_random_paths(p1, depot_id=depot_id)[0]
+        path_2 = utils.choose_random_paths(p2, depot_id=depot_id)[0]
+
+        for c_id in path_1:
+            child.move_customer(c_id, intra_depot=True, stochastic_choice=True)
+
+        for c_id in path_2:
+            child.move_customer(c_id, intra_depot=True, stochastic_choice=True)
+        return child
+
+
+
+
         return copy.deepcopy(np.random.choice([p1, p2]))
         #Randomly select depot x in set of depots to undergo reproduction
         depot = np.random.choice(self.depots[:, 0], 1)
@@ -119,7 +138,7 @@ class MDVRPModel():
 
         return new_p1_routes
 
-    def mutation(self, individual, intra_depot=True):
+    def mutation(self, individual, intra_depot=True, degree=1):
         '''
         Apply a mutation. Randomly choose between three different kinds of mutations.
 
@@ -200,13 +219,14 @@ class MDVRPModel():
             individual.tours[d_idx1][p_idx1] = insert_randomly(p1, c2)
             individual.tours[d_idx2][p_idx2] = insert_randomly(p2, c1)
 
-        id = np.random.choice((0, 1, 2))
-        if id == 0:
-            reversal_mutation(),
-        if id == 1:
-            single_customer_rerouting(),
-        if id == 2:
-            swapping()
+        for _ in range(degree):
+            id = np.random.choice((0, 1, 2))
+            if id == 0:
+                reversal_mutation(),
+            if id == 1:
+                single_customer_rerouting(),
+            if id == 2:
+                swapping()
 
     def run_step(self, generation_step):
         '''
@@ -217,27 +237,56 @@ class MDVRPModel():
         individuals = self.selection()
         new_offspring = []
         p1, p2 = np.random.choice(individuals, 2)
+        n_children = int(self.conf['birth_rate'] * self.conf['population_size'])
+        intra_depot = False if generation_step % self.conf['extra_depot_every'] == 0 else True
+
+        def step_to_degree(step):
+            if step < 5:
+                return 10
+            if step < 100:
+                return 5
+            if step < 200:
+                return 3
+            if step < 500:
+                return 2
+            return 1
+        degree = step_to_degree(generation_step)
+
         while True:
             offspring = self.create_offspring(p1, p2)
-            intra_depot = True if generation_step % 10 == 0 else False
-            self.mutation(offspring, intra_depot=intra_depot)
+            try:
+                self.mutation(offspring, intra_depot=intra_depot, degree=degree)
+            except ValueError:
+                # could occur if multiple mutations..
+                utils.cprint('[r]whoopsie, this individual became a retard :S')
+                continue
             if offspring.is_in_feasible_state():
                 new_offspring.append(offspring)
-                if len(new_offspring) == 10:
-                    break
+            if len(new_offspring) == n_children:
+                break
 
-        population_size = len(self.population)
-        new_generation = np.random.choice(
-            np.concatenate([new_offspring, self.population]),
-            size=population_size)
+        X = np.concatenate([new_offspring, self.population])
+        indices = np.argsort([self.fitness_score(e) for e in X])
+
+        ps = self.conf['population_size']
+        best = indices[:ps//2]
+        other = np.random.choice(indices[ps//2:], ps//2)
+        new_generation = X[np.concatenate((best, other))]
 
         self.population = new_generation
 
-    def evolve(self, n_steps=1000, visualize_step=None):
+    def evolve(self, visualize_step=None):
+        '''
+        repeatedly calls `self.run_step` and eventually plots progres.
+        '''
         min_scores = []
         mean_scores = []
-        fig, (ax0, ax1) = plt.subplots(1, 2)
-        for i in range(n_steps):
+
+        if visualize_step is not None:
+            fig, axes = plt.subplots(2, 2)
+            axes = axes.flatten()
+
+        for i in range(self.conf['num_generations']):
             self.run_step(i)
             data = [(each, self.fitness_score(each)) for each in self.population]
             fittest, score = min(data, key=lambda x: x[1])
@@ -247,11 +296,17 @@ class MDVRPModel():
             mean_scores.append(ms)
 
             if visualize_step is not None and i % visualize_step == 0:
-                fittest.visualize(ax=ax0, title=i)
+                fittest.visualize(ax=axes[0], title=i)
 
-            ax1.cla()
-            ax1.plot(min_scores, label='min score')
-            ax1.plot(mean_scores, label='mean score')
-            ax1.legend()
-            plt.pause(0.05)
-            print(f'min score in step {i} is {score} and mean is {ms}')
+                axes[1].cla()
+                axes[1].plot(min_scores, label='min score')
+                axes[1].plot(mean_scores, label='mean score')
+                axes[1].legend()
+                plt.pause(0.05)
+                utils.cprint(f'min score in step [y]{i}[w] is [y]{score}[w] and mean is [y]{ms}')
+
+                axes[2].cla()
+                X = [self.fitness_score(e) for e in self.population]
+                axes[2].hist(X,bins=100)
+                axes[2].set_title('score distribution')
+

@@ -3,6 +3,34 @@ import sklearn.cluster
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import re
+import termcolor
+
+
+def cprint(s):
+    '''
+    Example usage:
+    cprint('[y]Hello [g]world[r]!!!')
+    cprint('this text is in [r]red, and this is [y]yellow :)')
+    '''
+    C = {'r': 'red',
+         'g': 'green',
+         'b': 'blue',
+         'y': 'yellow',
+         'm': 'magenta',
+         'c': 'cyan',
+         'w': 'white'}
+    L = re.split('(\[\w\])', s)
+    color = 'white'
+
+    s_colored = []
+    for each in L:
+        if re.match('\[\w\]', each):
+            color = C[each[1]]
+        else:
+            s_colored.append(termcolor.colored(each, color))
+
+    print(''.join(s_colored))
 
 
 class NoPathFoundException(Exception):
