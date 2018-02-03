@@ -11,16 +11,21 @@ class MDVRPModel():
         depots: np.array of shape (N, 8) where there are N depots
         customers: np.array of shape (M, 5) where there are M customers.
         verbose: boolean, whether verbose output (prints) should be used or not
-
-        TODO: add config support so we can add tweakings to the model
         '''
         self.depots = depots
         self.customers = customers
         self.population = []
         self.conf = conf
 
+        X = np.vstack([
+            customers,
+            depots[:, :5]
+            ])
+        self.distance_matrix = utils.all_euclidean_dist(X)
+
         if conf['generate_initial_population']:
-            self.generate_initial_population(conf['population_size'])
+            population_size = utils.get_population_size(conf, 0)
+            self.generate_initial_population(population_size)
 
     def generate_initial_population(self, n, add_path_cost_dict=True):
         '''
@@ -28,7 +33,7 @@ class MDVRPModel():
 
         '''
         self.path_cost_dict = {}
-        self.population = [sample.Individual(self.customers, self.depots, path_cost_dict=self.path_cost_dict)
+        self.population = [sample.Individual(self.customers, self.depots, path_cost_dict=self.path_cost_dict, distance_matrix=self.distance_matrix)
                            for _ in range(n)]
 
     def fitness_score(self, individual):
@@ -54,6 +59,10 @@ class MDVRPModel():
         k = self.conf['tournament_size']
         n = self.conf['breeding_pool']
         p = self.conf['tournament_best_prob']
+        population_size  = utils.profile_value(self.conf['population_profile'], 0, self.conf['num_generations'])
+
+        if k > population_size: k = population_size
+        if n > population_size: n = population_size
 
         L = []
         for _ in range(n):
@@ -186,7 +195,7 @@ class MDVRPModel():
             '''
 
             customer_id = np.random.choice(individual.customers[:, 0])
-            individual.move_customer(customer_id, intra_depot=intra_depot)
+            individual.move_customer(customer_id, intra_depot=intra_depot, stochastic_choice=False)
 
         def swapping():
             '''
@@ -196,34 +205,51 @@ class MDVRPModel():
             randomly chosen customer from one route to another
             '''
 
-            depot_id = utils.choose_random_depot(individual,
-                                                 min_num_paths=2)
+            if intra_depot:
+                depot_id = utils.choose_random_depot(individual,
+                                                     min_num_paths=2)
+            else:
+                depot_id = 'all'
 
             try:
                 (d_idx1, p_idx1, p1), (d_idx2, p_idx2, p2) = utils.choose_random_paths(
-                    individual, n=2, depot_id=depot_id, include_indices=True, include_depot=False)
+                    individual, n=2, min_length=2, depot_id=depot_id, include_indices=True, include_depot=False)
             except utils.NoPathFoundException:
                 print('found no path!! in swapping')
                 return
 
+            _p1 = p1
+            _p2 = p2
             c1 = np.random.choice(p1)
             c2 = np.random.choice(p2)
 
-            p1 = utils.delete_by_value(p1, c1)
-            p2 = utils.delete_by_value(p2, c2)
+            '''
+            Before calling optimally insert we need to prepend and append the
+            depot.
+            '''
+            p1 = np.hstack([d_idx1, utils.delete_by_value(p1, c1), d_idx1])
+            p2 = np.hstack([d_idx2, utils.delete_by_value(p2, c2), d_idx2])
 
             def insert_randomly(arr, elem):
                 n = len(arr)
                 return np.insert(arr, np.random.choice(range(n + 1)), elem)
 
-            individual.tours[d_idx1][p_idx1] = insert_randomly(p1, c2)
-            individual.tours[d_idx2][p_idx2] = insert_randomly(p2, c1)
+            ap1 = individual.optimally_insert(p1, c2, stochastic_choice=True)
+            ap2 = individual.optimally_insert(p2, c1, stochastic_choice=True)
+
+            capacity_limit_1 = individual.depots[individual.depots[:, 0] == d_idx1].squeeze()[7]
+            capacity_limit_2 = individual.depots[individual.depots[:, 0] == d_idx2].squeeze()[7]
+
+            if (individual.capacity_requirement(ap1) <= capacity_limit_1 and
+                    individual.capacity_requirement(ap2) <= capacity_limit_2):
+                individual.tours[d_idx1][p_idx1] = ap1[1:-1]
+                individual.tours[d_idx2][p_idx2] = ap2[1:-1]
 
         for _ in range(degree):
-            id = np.random.choice((0, 1, 2))
+            id = np.random.choice((0, 1, 2, 3))
             if id == 0:
                 reversal_mutation(),
-            if id == 1:
+            if id == 1 or id == 3:
                 single_customer_rerouting(),
             if id == 2:
                 swapping()
@@ -237,29 +263,23 @@ class MDVRPModel():
         individuals = self.selection()
         new_offspring = []
         p1, p2 = np.random.choice(individuals, 2)
-        n_children = int(self.conf['birth_rate'] * self.conf['population_size'])
+
+        current_population_size = utils.profile_value(self.conf['population_profile'], generation_step, self.conf['num_generations'])
+
+        n_children = max(1, int(self.conf['birth_rate'] * current_population_size))
         intra_depot = False if generation_step % self.conf['extra_depot_every'] == 0 else True
 
-        def step_to_degree(step):
-            if step < 5:
-                return 10
-            if step < 100:
-                return 5
-            if step < 200:
-                return 3
-            if step < 500:
-                return 2
-            return 1
-        degree = step_to_degree(generation_step)
+        degree = utils.profile_value(
+            self.conf['mutation_profile'], generation_step, self.conf['num_generations'])
 
         while True:
             offspring = self.create_offspring(p1, p2)
-            try:
-                self.mutation(offspring, intra_depot=intra_depot, degree=degree)
-            except ValueError:
+            if not offspring.is_in_feasible_state():
+                import ipdb; ipdb.set_trace()
+            self.mutation(offspring, intra_depot=intra_depot, degree=degree)
+            #except ValueError:
                 # could occur if multiple mutations..
-                utils.cprint('[r]whoopsie, this individual became a retard :S')
-                continue
+            #utils.cprint('[r]whoopsie, this individual became a retard :S')
             if offspring.is_in_feasible_state():
                 new_offspring.append(offspring)
             if len(new_offspring) == n_children:
@@ -268,9 +288,11 @@ class MDVRPModel():
         X = np.concatenate([new_offspring, self.population])
         indices = np.argsort([self.fitness_score(e) for e in X])
 
-        ps = self.conf['population_size']
-        best = indices[:ps//2]
-        other = np.random.choice(indices[ps//2:], ps//2)
+        ps = current_population_size
+        best = indices[:3]
+        other = np.random.choice(indices[3:], ps - 3)
+        # best = indices[:ps//2]
+        # other = np.random.choice(indices[ps//2:], ps//2)
         new_generation = X[np.concatenate((best, other))]
 
         self.population = new_generation
@@ -281,6 +303,7 @@ class MDVRPModel():
         '''
         min_scores = []
         mean_scores = []
+        steps = []
 
         if visualize_step is not None:
             fig, axes = plt.subplots(2, 2)
@@ -288,22 +311,28 @@ class MDVRPModel():
 
         for i in range(self.conf['num_generations']):
             self.run_step(i)
+
+            # TODO: plotting could probably be fixed in its own function somehwere.
             data = [(each, self.fitness_score(each)) for each in self.population]
             fittest, score = min(data, key=lambda x: x[1])
             scores = [each[1] for each in data]
             ms = np.mean(scores)
             min_scores.append(min(scores))
-            mean_scores.append(ms)
+            mean_scores += scores
+            steps += [i] * len(scores)
+            if i % 5 == 0:
+                sz = utils.get_population_size(self.conf, i)
+                utils.cprint(f'min score in step [y]{i}[w] is [y]{score}[w] and mean is [y]{ms}[w]. Population size is [y]{sz}')
 
             if visualize_step is not None and i % visualize_step == 0:
                 fittest.visualize(ax=axes[0], title=i)
 
                 axes[1].cla()
                 axes[1].plot(min_scores, label='min score')
-                axes[1].plot(mean_scores, label='mean score')
+                #axes[1].plot(mean_scores, label='mean score')
+                axes[1].scatter(steps, mean_scores, alpha=0.1, cmap='viridis')
                 axes[1].legend()
                 plt.pause(0.05)
-                utils.cprint(f'min score in step [y]{i}[w] is [y]{score}[w] and mean is [y]{ms}')
 
                 axes[2].cla()
                 X = [self.fitness_score(e) for e in self.population]

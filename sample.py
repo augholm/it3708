@@ -8,14 +8,17 @@ L = []
 
 plt.ion()
 
+
 class Individual():
-    def __init__(self, customers, depots, initialize=True, path_cost_dict={}):
+    def __init__(self, customers, depots, initialize=True, path_cost_dict={}, distance_matrix=None):
         '''
         customers: np.array representing the customers
         depots: np.array representing the depots
         initialize: boolean, if True will call self.generate_initial_state
         path_cost_dict: used to optimize path_cost
+        distance_matrix: lookup for further optimize path cost.
         '''
+        self.distance_matrix = distance_matrix
         self.customers = customers
         self.depots = depots
         self.tours = collections.defaultdict(lambda: [])
@@ -43,30 +46,51 @@ class Individual():
 
         def split_to_paths(sequence, depot_id, carry_limit):
             '''
-            sequence: list of customer indices
+            sequence: list of customer indices, without depot. Example: [5, 32, 22]
+            depot_id: integer, representing the depot id
+            carry_limit: the maxmimum allowed carry for a particular route
 
             returns: a list of of subsequences, each with total capacity below
             maximum allowed
+
+            Description of algorithm: While there still are customers that have
+            not been served, add them to path. THe selection of the next
+            customer from the `current` customer is based on the shortest
+            distance from `current`. If the route can also serve the next
+            customer (i.e the carry limit has not been exceeded), then the next
+            customer is also served. Otherwise return the route and start a new
+            route.
             '''
-            all_tours = []
-            subtour = []
-            for entry in sequence:
-                roundtrip = [depot_id] + subtour + [entry, depot_id]
-                if self.capacity_requirement(roundtrip) < carry_limit:
-                    subtour.append(entry)
+            Q = []
+            current = depot_id
+            unvisited = sequence
+            path = [depot_id]
+            while len(unvisited) > 0:
+                while self.capacity_requirement(path + [depot_id]) < carry_limit and len(unvisited) > 0:  # noqa
+                    distances = self.distance_matrix[np.int64(current)-1, :]
+                    idx = np.argmin(distances[0, unvisited-1])
+                    current = unvisited[idx]
+                    path.append(current)
+                    unvisited = np.delete(unvisited, idx)
+                if len(unvisited) == 0:
+                    if self.capacity_requirement(path + [depot_id]) > carry_limit:
+                        Q.append(path[1:-1])
+                        Q.append(path[-1])
+                        return Q
+                    else:
+                        Q.append(path[1:])
                 else:
-                    all_tours.append(subtour)
-                    subtour = [entry]
-            if len(subtour) == 0:
-                return all_tours
-            else:
-                return all_tours + [subtour]
+                    Q.append(path[1:-1])
+                path = [depot_id, current]
+            return Q
 
         for dept_id, carry_limit in self.depots[:, [0, 7]]:
             assignment = self.customers[Y == dept_id][:, 0]
             A = np.random.permutation(assignment)
             X = split_to_paths(A, dept_id, carry_limit)
             self.tours[dept_id] = X
+            if not self.is_in_feasible_state(verbose=True):
+                import ipdb;ipdb.set_trace()  # TODO: remove soon..
 
     def iter_paths(self, depot_id, include_indices=False, include_depot=False):
         '''
@@ -138,14 +162,14 @@ class Individual():
             return 0
 
         stacked = np.vstack([
-            self.customers[:, [0, 4]],
-            self.depots[:, [0, 4]],
+            self.customers,
+            self.depots[:, :5],
             ])
         capacities = utils.get_by_ids(stacked, tour)
         if len(capacities.shape) == 1:
             return capacities[1]
         else:
-            return capacities[:, 1].sum()
+            return capacities[:, 4].sum()
 
     def _find_customer(self, customer_id):
         '''
@@ -166,19 +190,24 @@ class Individual():
         '''
         # step 1: find the customer and remove it from the current tour
         d_idx, p_idx = self._find_customer(customer_id)
+        _d_idx, _p_idx = d_idx, p_idx  # noqa
         path_with_customer = np.array(self.tours[d_idx][p_idx])
         path_without_customer = utils.delete_by_value(path_with_customer, customer_id)
 
         self.tours[d_idx][p_idx] = path_without_customer
 
         # step 2: find somewhere to put this boy
-        customer = utils.get_by_ids(self.customers, customer_id)
+        stacked = np.vstack([
+            self.customers,
+            self.depots[:, :5],
+            ])
+        customer = utils.get_by_ids(stacked, customer_id)
         demand = customer[4]
         L = []
 
         g = [d_idx] if intra_depot else self.iter_depots()
         for d_idx in g:
-            carry_lim = utils.get_by_ids(self.depots, d_idx)[7]
+            carry_lim = self.depots[self.depots[:, 0] == d_idx].squeeze()[7]
 
             for p_idx, path in enumerate(self.iter_paths(d_idx, include_depot=True)):
                 if self.capacity_requirement(path) + demand <= carry_lim:
@@ -187,8 +216,15 @@ class Individual():
                     score = self.path_cost(path_candidate)
                     L.append((score, d_idx, p_idx, path_candidate))
 
+        if stochastic_choice:
+            scores = np.array([e[1] for e in L])
+            distr = np.abs(np.log(scores / scores.sum())).cumsum()
+            v = np.random.uniform(distr.min(), distr.max())
+            idx = np.argwhere(distr >= v)[0][0]
+            min_score, min_d_idx, min_p_idx, path = L[idx]
 
-        min_score, min_d_idx, min_p_idx, path = min(L, key=lambda x: x[0])
+        else:
+            min_score, min_d_idx, min_p_idx, path = min(L, key=lambda x: x[0])
 
         path = path[1:-1]  # cut away the beginning / end
         self.tours[min_d_idx][min_p_idx] = path
@@ -204,7 +240,7 @@ class Individual():
         Example:
             path = [50, 1, 2, 3, 50]
             customer_id = 25
-            
+
             considers:
                 min([cost([50, 25, 1, 2, 3, 50]),
                      cost([50, 1, 25, 2, 3, 50]),
@@ -225,7 +261,11 @@ class Individual():
         '''
         costs = np.apply_along_axis(self.path_cost, 1, path_cands)
         if stochastic_choice:
+            '''
+            TODO: fix maybe so it becomes better. Right now it sucks.
+            '''
             path_id = np.random.choice(costs.argsort()[:3])  # choose among top 3
+            path_id = costs.argmin()
         else:
             path_id = costs.argmin()
 
@@ -237,10 +277,16 @@ class Individual():
 
         The path should include the depots as well.
         Example:
-            path = [50, 12, 24, 51] where the depot is index 51.
+            path = [51, 12, 24, 51] where the depot is index 51.
 
         returns: a float
         '''
+
+        p = np.array(path, dtype=np.int64)
+        if self.distance_matrix is not None:
+            retval = self.distance_matrix[p[:-1]-1, p[1:] - 1].sum()
+            return retval
+
         spath = path.tostring()
         if spath in self.path_cost_dict:
             return self.path_cost_dict[spath]
@@ -273,14 +319,17 @@ class Individual():
                 else:
                     yield each
 
-    def is_in_feasible_state(self):
+    def is_in_feasible_state(self, verbose=False):
         for d_idx, p_idx, path in self.iter_all_paths(include_indices=True, include_depot=True):
-            carry_limit = utils.get_by_ids(self.depots, d_idx)[7]
+            carry_limit = self.depots[self.depots[:, 0] == d_idx].squeeze()[7]
             if self.capacity_requirement(path) > carry_limit:
+                if verbose:
+                    utils.cprint(f'{self} is [r]not in feasible state')
+                    utils.cprint(f'found the path {path} having capacity {self.capacity_requirement(path)}, which is over the carry limit of {carry_limit}.')  # noqa
+
                 return False
 
         return True
-
 
     '''
     Visualization stuff
@@ -289,7 +338,6 @@ class Individual():
         if ax is None:
             ax = plt.gca()
         ax.clear()
-        #plt.clf()
         ax.set_prop_cycle(cycler('linestyle', '- -- : -.'.split()))
 
         locs = np.vstack([
@@ -299,10 +347,9 @@ class Individual():
         ax.scatter(self.depots[:, 1], self.depots[:, 2], c='r', marker='*')
         ax.scatter(self.customers[:, 1], self.customers[:, 2], c='b', marker='.')
 
-        #ax.set_color_cycle(['yellow', 'green', 'magenta', 'brown', 'orange'])
         for color, depot_id in zip('c m y k r g b'.split(), self.iter_depots()):
             for path in self.iter_paths(depot_id, include_depot=True):
                 xy_coords = utils.get_by_ids(locs, path)[:, [1, 2]]
-                ax.plot(xy_coords[:, 0], xy_coords[:, 1], color, alpha=0.3)
+                ax.plot(xy_coords[:, 0], xy_coords[:, 1], color, alpha=0.6)
         if title is not None:
             ax.set_title(title)
