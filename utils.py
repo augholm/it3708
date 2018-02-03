@@ -7,6 +7,27 @@ import re
 import termcolor
 
 
+def profile_value(profile, step, num_generations):
+    if not is_iterable(profile):
+        return profile
+    T = num_generations // len(profile)
+    T = step / num_generations * len(profile)
+
+    return profile[int(T)]
+
+
+def get_population_size(conf_entry, time_step=0):
+    conf = conf_entry
+
+    if is_iterable(conf['population_profile']):
+        T = conf['num_generations'] // len(conf['population_profile'])
+        T = (time_step / conf['num_generations']) * len(conf['population_profile'])
+        current_population_size = conf['population_profile'][int(T)]
+    else:
+        current_population_size = conf['population_profile']
+    return current_population_size
+
+
 def cprint(s):
     '''
     Example usage:
@@ -69,20 +90,18 @@ def get_by_ids(data, id):
     probably return some weird error
 
     Example usage:
-        my_customer = get_by_id(customers, 22)
-        some_depots = get_by_ids(depots, [51, 52, 53])
+        some_depots = get_by_ids(depots_and_customers, [51, 52, 53])
 
     returns a np.array
     '''
-    if not is_iterable(id):
-        match = data[data[:, 0] == id].squeeze()
-        return match
 
-    if len(id) == 1:
-        return get_by_ids(data, id[0])
+    id = np.array(id, dtype=np.int64)
+    return data[id-1, :]
+    # if len(id) == 1:
+    #     return get_by_ids(data, id[0])
 
-    X = pd.DataFrame(data[:, 1:], index=data[:, 0]).loc[id]
-    return np.vstack([X.index.values, X.values.T]).T
+    # X = pd.DataFrame(data[:, 1:], index=data[:, 0]).loc[id]
+    # return np.vstack([X.index.values, X.values.T]).T
 
 
 def visualize_closest_depot(customers, depots, ax=None):
@@ -194,3 +213,12 @@ def euclidean_dist(X):
 
     dists = np.sqrt((np.diff(X, n=1, axis=0)**2).sum(axis=1))
     return dists.sum()
+
+
+def all_euclidean_dist(X):
+    L = []
+    for i, each in enumerate(X):
+        relative_locs = X[:, [1, 2]] - each[[1, 2]]
+        distances = np.sqrt(np.sum(relative_locs ** 2, axis=1))
+        L.append(distances)
+    return np.matrix(L)
