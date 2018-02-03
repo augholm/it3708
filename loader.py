@@ -39,7 +39,7 @@ def load_dataset(filename):
     m, n, t = L[0]
     X = np.array(L[1:1+t])
     D, Q = X[:, 0], X[:, 1]
-    X = np.array(L[1+t:])
+    X = np.array(L[1+t:], dtype=np.int64)
 
     customers = X[:-t]
 
