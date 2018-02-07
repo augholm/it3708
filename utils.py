@@ -8,6 +8,8 @@ import termcolor
 
 
 def profile_value(profile, step, num_generations):
+    if step == num_generations:
+        return profile[-1]
     if not is_iterable(profile):
         return profile
     T = num_generations // len(profile)
@@ -58,12 +60,6 @@ class NoPathFoundException(Exception):
     pass
 
 
-def delete_by_value(arr, value):
-    '''
-    Returns an array where all instances of `value` in `arr` are gone
-    '''
-    arr = np.array(arr)
-    return np.delete(arr, np.argwhere(arr == value))
 
 
 def flatten(iterable):
@@ -139,7 +135,7 @@ def choose_random_paths(individual, n=1, min_length=1, depot_id=None, include_in
         None or 'all' if all depots are considered
 
     include_indices, Boolean. If True then will return an array consisting
-    of tuples (d_idx, p_idx, path)
+    of tuples (path, d_idx, p_idx)
 
     include_depot, Boolean. If True then each path will be prepended
     and appended with the depot index.
@@ -151,25 +147,26 @@ def choose_random_paths(individual, n=1, min_length=1, depot_id=None, include_in
     '''
 
     if depot_id == 'random':
-        g = [choose_random_depot(individual)]
+        g = [np.random.choice(individual.depots)]
     elif type(depot_id) != str and is_iterable(depot_id):
         g = depot_id
     elif depot_id is None or depot_id == 'all':
-        g = [e for e in individual.iter_depots()]
+        g = individual.depots
     elif not is_iterable(depot_id):  # must be an iterable
         g = [depot_id]
 
     X = []
     for depot_id in g:
-        for x in individual.iter_paths(depot_id,
-                                       include_indices=include_indices,
-                                       include_depot=include_depot):
+        for p, c, cap, d_idx, p_idx in individual.iter_paths(depot_id=depot_id, include_depot=include_depot, yield_depot_idx=True, yield_path_idx=True):
+            if len(p) < min_length:
+                continue
+
             if include_indices:
-                _, _, path = x
+                yld = p, d_idx, p_idx
             else:
-                path = x
-            if len(path) >= min_length:
-                X.append(x)
+                yld = p
+
+            X.append(yld)
 
     if len(X) < n:  # TODO: consider raising if zero has been found instead of `n`?
         raise NoPathFoundException()
@@ -216,9 +213,24 @@ def euclidean_dist(X):
 
 
 def all_euclidean_dist(X):
+    '''
+    excpeted: Nx2 array of xy-coordinates.
+    '''
     L = []
     for i, each in enumerate(X):
-        relative_locs = X[:, [1, 2]] - each[[1, 2]]
+        relative_locs = X[:] - each
         distances = np.sqrt(np.sum(relative_locs ** 2, axis=1))
         L.append(distances)
     return np.matrix(L)
+
+
+def delete_by_value(arr, value):
+    '''
+    Returns an array where all instances of `value` in `arr` are gone
+    '''
+    arr = np.array(arr)
+    return np.delete(arr, np.argwhere(arr == value).squeeze())
+
+
+def matrix_row_to_array(row):
+    return np.asarray(row).squeeze()

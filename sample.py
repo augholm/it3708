@@ -74,13 +74,13 @@ class Individual():
                     unvisited = np.delete(unvisited, idx)
                 if len(unvisited) == 0:
                     if self.capacity_requirement(path + [depot_id]) > carry_limit:
-                        Q.append(path[1:-1])
-                        Q.append(path[-1])
+                        Q.append(np.array(path[1:-1], np.int64))
+                        Q.append(np.array(path[-1], np.int64))
                         return Q
                     else:
-                        Q.append(path[1:])
+                        Q.append(np.array(path[1:], np.int64))
                 else:
-                    Q.append(path[1:-1])
+                    Q.append(np.array(path[1:-1], np.int64))
                 path = [depot_id, current]
             return Q
 
@@ -88,9 +88,7 @@ class Individual():
             assignment = self.customers[Y == dept_id][:, 0]
             A = np.random.permutation(assignment)
             X = split_to_paths(A, dept_id, carry_limit)
-            self.tours[dept_id] = X
-            if not self.is_in_feasible_state(verbose=True):
-                import ipdb;ipdb.set_trace()  # TODO: remove soon..
+            self.tours[np.int64(dept_id)] = X
 
     def iter_paths(self, depot_id, include_indices=False, include_depot=False):
         '''
@@ -226,16 +224,23 @@ class Individual():
         else:
             min_score, min_d_idx, min_p_idx, path = min(L, key=lambda x: x[0])
 
+        if min_d_idx == _d_idx and min_p_idx == _p_idx and len(L) >= 2:
+            # make sure it is unique.
+            L = sorted(L, key=lambda x: x[0])
+            min_score, min_d_idx, min_p_idx, path = L[1]
+
         path = path[1:-1]  # cut away the beginning / end
         self.tours[min_d_idx][min_p_idx] = path
 
     def optimally_insert(self, path, customer_id, stochastic_choice=False):
         '''
-        Given a specific path and a customer_id, we want to determine _where_ in the
-        chosen path that is the best to put it in
+        path: list of ints (customer id's)
+        customer_id: int, the customer we want to place
+        stochastic_choice: Boolean. If True, then a suboptimal insertion may
+        occur with a small probability
 
-        stochastic_choice: boolean, if True then choose randomly, but weighted
-        by the score (the better score --> more likely to choose it).
+        returns: a list of ints
+
 
         Example:
             path = [50, 1, 2, 3, 50]
@@ -246,16 +251,29 @@ class Individual():
                      cost([50, 1, 25, 2, 3, 50]),
                      cost([50, 1, 2, 25, 3, 50]),
                      cost([50, 1, 2, 3, 25, 50]))
-                and return the minimum of these, e.g [50, 1, 25, 2, 3, 50], if
+                >> returns the minimum of these, e.g [50, 1, 25, 2, 3, 50], if
                 that has the lowest cost
+
+        ---------------------
 
         '''
         path = np.array(path)
         L = len(path)
 
+        '''
+        Example:
+        path = [50, 1, 2, 3, 50]
+        customer = 4
+
+        --> path_cands = array([50, 4, 1, 2, 3, 50],
+                               [50, 1, 4, 2, 3, 50],
+                               [50, 1, 2, 4, 3, 50],
+                               [50, 1, 2, 3, 4, 50])
+        '''
         indices = np.arange(1, L**2 - 2, L+1)
         X = np.vstack([path] * (L-1))
         path_cands = np.insert(X, indices, customer_id).reshape([-1, L+1])
+
         '''
         How to properly select here??
         '''
@@ -264,8 +282,12 @@ class Individual():
             '''
             TODO: fix maybe so it becomes better. Right now it sucks.
             '''
-            path_id = np.random.choice(costs.argsort()[:3])  # choose among top 3
-            path_id = costs.argmin()
+            candidates = costs.argsort()[:3]
+            if len(candidates) < 3:
+                path_id = candidates[0]
+            else:
+                path_id = np.random.choice(candidates,
+                                           p=(0.5, 0.3, 0.2))
         else:
             path_id = costs.argmin()
 
@@ -331,6 +353,23 @@ class Individual():
 
         return True
 
+    def describe(self):
+        all_customers = set()
+        for d_idx in self.iter_depots():
+            for i, path in enumerate(self.iter_paths(d_idx)):
+                if len(set(path) & all_customers) > 0:
+                    utils.cprint('[r]Warning: found customer at multiple paths')
+                    print(set(path) & all_customers)
+
+                all_customers = all_customers.union(set(path))
+                demand = self.capacity_requirement(path)
+                supply = self.depots[self.depots[:, 0] == d_idx].squeeze()[7]
+                color = 'g' if demand <= supply else 'r'
+                utils.cprint(f'[g]depot {d_idx}:[w] {path} [{color}]({demand} / {supply})')
+        if len(all_customers) != 50:
+            print(all_customers)
+        
+
     '''
     Visualization stuff
     '''
@@ -345,7 +384,10 @@ class Individual():
             self.depots[:, [0, 1, 2]]])
 
         ax.scatter(self.depots[:, 1], self.depots[:, 2], c='r', marker='*')
-        ax.scatter(self.customers[:, 1], self.customers[:, 2], c='b', marker='.')
+        ax.scatter(self.customers[:, 1], self.customers[:, 2], s=2*self.customers[:, 4], c='b', marker='.')
+        for txt, x, y in zip(self.customers[:, 0], self.customers[:, 1], self.customers[:, 2]):
+            txt = str(txt)
+            ax.annotate(txt, (x, y), size=8)
 
         for color, depot_id in zip('c m y k r g b'.split(), self.iter_depots()):
             for path in self.iter_paths(depot_id, include_depot=True):

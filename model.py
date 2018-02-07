@@ -1,4 +1,5 @@
 import numpy as np
+import optimization
 import utils
 import sample
 import matplotlib.pyplot as plt
@@ -21,7 +22,7 @@ class MDVRPModel():
             customers,
             depots[:, :5]
             ])
-        self.distance_matrix = utils.all_euclidean_dist(X)
+        self.distance_matrix = utils.all_euclidean_dist(X[:, [1, 2]])
 
         if conf['generate_initial_population']:
             population_size = utils.get_population_size(conf, 0)
@@ -65,8 +66,14 @@ class MDVRPModel():
         if n > population_size: n = population_size
 
         L = []
+        if self.conf['weighted_selection']:
+            costs = np.array([1/self.fitness_score(each) for each in self.population])
+            weights = costs / costs.sum()
+        else:
+            weights = None
+
         for _ in range(n):
-            X = np.random.choice(self.population, k, replace=False)
+            X = np.random.choice(self.population, k, replace=False, p=weights)
             scores = [(self.fitness_score(each), each) for each in X]
             if np.random.uniform(0, 1) <= p:
                 L.append(min(scores, key=lambda x: x[0])[1])
@@ -94,9 +101,6 @@ class MDVRPModel():
         for c_id in path_2:
             child.move_customer(c_id, intra_depot=True, stochastic_choice=True)
         return child
-
-
-
 
         return copy.deepcopy(np.random.choice([p1, p2]))
         #Randomly select depot x in set of depots to undergo reproduction
@@ -133,7 +137,6 @@ class MDVRPModel():
     #TODO:change to generic names
     def insert_customer(self, new_p1_routes, p2_routes, prob):
 
-
         if np.random.uniform(0,1) <= prob:
             insertion_costs = []
             for location in range(len(new_p1_routes)):
@@ -147,7 +150,7 @@ class MDVRPModel():
 
         return new_p1_routes
 
-    def mutation(self, individual, intra_depot=True, degree=1):
+    def mutation(self, individual, intra_depot=True, n_mutations=1):
         '''
         Apply a mutation. Randomly choose between three different kinds of mutations.
 
@@ -172,7 +175,7 @@ class MDVRPModel():
                     individual, n=1, min_length=2, include_indices=True,
                     depot_id='random' if intra_depot else 'all')[0]
             except utils.NoPathFoundException:
-                print('found no path')
+                utils.cprint('[y]WARNING: found no path in swapping')
                 return
 
             a, b = np.random.choice(range(len(path)), 2, replace=False)
@@ -218,10 +221,14 @@ class MDVRPModel():
                 print('found no path!! in swapping')
                 return
 
+            # p1 = np.array(p1, np.int64)
+            # p2 = np.array(p2, np.int64)
+
             _p1 = p1
             _p2 = p2
-            c1 = np.random.choice(p1)
+            c1 = np.random.choice(p1)  # TODO: fix.
             c2 = np.random.choice(p2)
+            #c2 = p2[self.distance_matrix[c1-1, p2-1].argmin()]
 
             '''
             Before calling optimally insert we need to prepend and append the
@@ -240,19 +247,119 @@ class MDVRPModel():
             capacity_limit_1 = individual.depots[individual.depots[:, 0] == d_idx1].squeeze()[7]
             capacity_limit_2 = individual.depots[individual.depots[:, 0] == d_idx2].squeeze()[7]
 
+            X = np.vstack([
+                individual.customers[:, [0, 1, 2]],
+                individual.depots[:, [0, 1, 2]]
+                ])
+
             if (individual.capacity_requirement(ap1) <= capacity_limit_1 and
                     individual.capacity_requirement(ap2) <= capacity_limit_2):
-                individual.tours[d_idx1][p_idx1] = ap1[1:-1]
-                individual.tours[d_idx2][p_idx2] = ap2[1:-1]
+                import copy
+                ap1_ = copy.deepcopy(ap1)
+                ap2_ = copy.deepcopy(ap2)
+                ap1 = new_path = self._solve_tsp(ap1[1:-1], d_idx1)
+                ap2 = self._solve_tsp(ap2[1:-1], d_idx2)
+                individual.tours[d_idx1][p_idx1] = ap1
+                individual.tours[d_idx2][p_idx2] = ap2
 
-        for _ in range(degree):
-            id = np.random.choice((0, 1, 2, 3))
+        def one_in_one_out():
+            '''
+            Choose a customer. Then, try to see if we can remove one or more
+            of the path on the other side and add new that are close to it.
+            '''
+            if intra_depot:
+                depot_id = utils.choose_random_depot(individual,
+                                                     min_num_paths=2)
+            else:
+                depot_id = 'all'
+
+            try:
+                (d_idx, p_idx, path)  = utils.choose_random_paths(
+                    individual, n=2, min_length=5, depot_id=depot_id, include_indices=True, include_depot=False)[0]
+            except utils.NoPathFoundException:
+                # utils.cprint('[r]Warning:[w] Found no path in one_in_one_out mutation')
+                return
+
+            capacity_limit = self.depots[self.depots[:, 0] == d_idx].squeeze()[7]
+            c = np.random.choice(path)
+            D = self.distance_matrix
+            # sorted = np.asarray(np.argsort(D[c-1, p-1])).squeeze()
+            radial_distance = utils.matrix_row_to_array(np.argsort(D[c-1, :]))
+            radial_distance += 1
+            in_path = []
+            outside_path = []
+            for each in radial_distance:
+                if each in self.depots[:, 0]:
+                    continue
+                if each in path:
+                    in_path.append(each)
+                else:
+                    outside_path.append(each)
+
+            intra = np.array(in_path)[-3:]
+            outside = np.array(outside_path)[:5]
+
+
+            L = []
+            X = np.vstack(
+                    [self.customers, self.depots[:, :5]])
+
+            for leave in intra:
+                candidate_path = utils.delete_by_value(path, leave)
+                remaining_space = capacity_limit - individual.capacity_requirement(candidate_path)
+                for enter in outside:
+                    demand = individual.capacity_requirement([enter])
+                    if demand > remaining_space:
+                        continue
+
+                    path_with_depot = np.hstack((d_idx, candidate_path, d_idx))
+                    P = individual.optimally_insert(path_with_depot, enter, stochastic_choice=False)
+                    xy_locs = utils.get_by_ids(X, P)[:, [1, 2]]
+                    distance = utils.euclidean_dist(xy_locs)
+
+                    L.append((distance, P[1:-1], leave, enter))
+
+            # import ipdb; ipdb.set_trace()
+            if len(L) == 0:
+                return
+            min_score, new_path, leave_customer, enter_customer = min(L, key=lambda x: x[0])
+
+            # import ipdb; ipdb.set_trace()
+            # individual.remove_customer(leave_customer)
+            individual.move_customer(leave_customer, intra_depot=False)  # now move this fuck
+            # individual.tours[d_idx][p_idx] = new_path
+            new_path = self._solve_tsp(new_path, d_idx)
+            individual.tours[d_idx][p_idx] = new_path
+
+        def local_opt():
+            X = np.vstack([
+                individual.customers[:, [0, 1, 2]],
+                individual.depots[:, [0, 1, 2]]
+                ])
+            (d_idx, p_idx, path) = utils.choose_random_paths(
+                individual, n=1, min_length=3, depot_id='random', include_indices=True)[0]
+
+            new_path = self._solve_tsp(path, d_idx)
+            individual.tours[d_idx][p_idx] = new_path
+
+        for _ in range(n_mutations):
+            id = np.random.choice(
+                range(7),)
             if id == 0:
-                reversal_mutation(),
-            if id == 1 or id == 3:
-                single_customer_rerouting(),
+                single_customer_rerouting()
+            if id == 1:
+                reversal_mutation()
             if id == 2:
-                swapping()
+                pass
+            if id == 3:
+                local_opt()
+            if id == 4:
+                single_customer_rerouting()
+            if id == 5:
+                one_in_one_out()
+                local_opt()
+            if id == 6:
+                one_in_one_out()
 
     def run_step(self, generation_step):
         '''
@@ -262,38 +369,50 @@ class MDVRPModel():
 
         individuals = self.selection()
         new_offspring = []
-        p1, p2 = np.random.choice(individuals, 2)
 
         current_population_size = utils.profile_value(self.conf['population_profile'], generation_step, self.conf['num_generations'])
 
         n_children = max(1, int(self.conf['birth_rate'] * current_population_size))
         intra_depot = False if generation_step % self.conf['extra_depot_every'] == 0 else True
 
-        degree = utils.profile_value(
+        n_mutations = utils.profile_value(
             self.conf['mutation_profile'], generation_step, self.conf['num_generations'])
 
         while True:
+            p1, p2 = np.random.choice(individuals, 2, replace=False)
             offspring = self.create_offspring(p1, p2)
-            if not offspring.is_in_feasible_state():
-                import ipdb; ipdb.set_trace()
-            self.mutation(offspring, intra_depot=intra_depot, degree=degree)
-            #except ValueError:
-                # could occur if multiple mutations..
-            #utils.cprint('[r]whoopsie, this individual became a retard :S')
+            # if not offspring.is_in_feasible_state():
+            #     import ipdb; ipdb.set_trace()
+            #     pass
+            # self.mutation(offspring, intra_depot=intra_depot, n_mutations=n_mutations)
+            # #except ValueError:
+            #     # could occur if multiple mutations..
+            # #utils.cprint('[r]whoopsie, this individual became a retard :S')
             if offspring.is_in_feasible_state():
                 new_offspring.append(offspring)
+            else:
+                pass
             if len(new_offspring) == n_children:
                 break
 
+        
         X = np.concatenate([new_offspring, self.population])
-        indices = np.argsort([self.fitness_score(e) for e in X])
+
+        indices = np.argsort([self.fitness_score(e) for e in self.population])
+        D = np.array(self.population)
+        X = np.concatenate([D[indices], new_offspring])
 
         ps = current_population_size
-        best = indices[:3]
-        other = np.random.choice(indices[3:], ps - 3)
+        best = indices[:50]
+        other = new_offspring
+        # other = np.random.choice(indices[10:], ps - 10)
         # best = indices[:ps//2]
         # other = np.random.choice(indices[ps//2:], ps//2)
-        new_generation = X[np.concatenate((best, other))]
+        # new_generation = X[np.concatenate((best, other))]
+        new_generation = X
+        for each in new_generation:
+            if np.random.choice([True, False], p=(0.2, 0.8)):
+                self.mutation(each, intra_depot=False)
 
         self.population = new_generation
 
@@ -306,8 +425,11 @@ class MDVRPModel():
         steps = []
 
         if visualize_step is not None:
-            fig, axes = plt.subplots(2, 2)
-            axes = axes.flatten()
+            if len(plt.gcf().get_axes()) < 4:
+                fig, axes = plt.subplots(2, 2)
+                axes = axes.flatten()
+            else:
+                fig, axes = plt.gcf(), plt.gcf().get_axes()
 
         for i in range(self.conf['num_generations']):
             self.run_step(i)
@@ -339,3 +461,25 @@ class MDVRPModel():
                 axes[2].hist(X,bins=100)
                 axes[2].set_title('score distribution')
 
+    def _solve_tsp(self, seq, depot_idx):
+        '''
+        Simple wrapper around optimization.solve_tsp
+        '''
+        X = np.vstack([
+            self.customers[:, [0, 1, 2]],
+            self.depots[:, [0, 1, 2]]
+            ])
+
+        depot_and_customer_locs = X[np.hstack((depot_idx-1, seq-1))][:, [1, 2]]
+        try:
+            indices = optimization.solve_tsp(depot_and_customer_locs)
+        except:
+            # in case not able to solve..
+            utils.cprint('[y]could not solve tsp -- no convex hull found')
+            return seq
+
+        # we do not want to include the depot in our seq. Delete it. We also have to substract by 1
+        indices = utils.delete_by_value(indices, 0) - 1
+        # now indices is just a permutation of the seq
+
+        return seq[indices]
