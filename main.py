@@ -5,7 +5,7 @@
 
 import loader
 import numpy as np  # noqa
-from model2 import MDVRPModel
+from model import MDVRPModel
 import utils
 import matplotlib.pyplot as plt
 import parser

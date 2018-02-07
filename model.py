@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import utils
-import sample2
+import sample
 
 
 class MDVRPModel():
@@ -33,7 +33,7 @@ class MDVRPModel():
     def generate_initial_population(self, n):
         L = []
         for _ in range(n):
-            L.append(sample2.Individual(self.X, self.depots, self.D, initialize=True))
+            L.append(sample.Individual(self.X, self.depots, self.D, initialize=True))
 
         self.population = L
 
