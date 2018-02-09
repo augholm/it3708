@@ -3,6 +3,7 @@
 #                       August Holm & Mikael Kvalvaer
 #######################################################################
 
+import sample
 import loader
 import numpy as np  # noqa
 from model import MDVRPModel
@@ -13,8 +14,8 @@ plt.ion()
 
 filename = 'data/problem/p01'
 # 01: 576 (610 best)
-# 02: 473 (526 best, 11%)
-# 03: 641 (746 best, 16%)
+# 02: 473 (502 best)
+# 03: 641 (746 best, 10%)
 # 04: 1001 (1238)
 solution_file = 'data/solution/' + filename.split('/')[2] + '.res'
 with open(solution_file) as f:
@@ -28,37 +29,20 @@ conf = parser.parse_config('configs/default.conf')
 
 model = MDVRPModel(customers, depots, conf)
 
+model.evolve(3)
 one = model.population[0]
 
+# L = [each.fitness_score() for each in model.population]
 L = [each.fitness_score() for each in model.population]
-print('before')
-print(L)
-model.evolve(10)
-L = [each.fitness_score() for each in model.population]
-print('after')
-print(L)
-# model.evolve(visualize_step=50)
-# # 
-# scores = [model.fitness_score(e) for e in model.population]
-# best = model.population[np.argmin(scores)]
-# # best.describe()
-# # 
-# min_score = min(scores)
-# above = '{:.2f}'.format((min_score / optimal_score - 1)*100)
-# min_score = '{:.2f}'.format(min_score)
-# 
-# utils.cprint(f'[g]Done.[w] Min score is [b]{min_score}[w], which is [b] {above}%[w] above optimal') # noqa
+best = model.population[np.argmin(L)]
 
+if len(plt.get_fignums()) > 0:
+    ax0, ax1 = plt.gcf().get_axes()
 
+best.visualize(ax=ax0)
 
-# puzzle 1: 633 / 576 ~ 1.09
-
-# with the lookup thingy
-# --> 21.347 seconds
-# 11.920 in path_cost-
-# the roll-function took 5.347 seconds
-
-# 20.856 seconds for the lookup table
-# copy.deepcopy took 8 seconds
-# 16 seconds with the TSP stuff
-# 16 seconds without the TSP heuristic
+import copy
+clone = copy.deepcopy(np.random.choice(model.population))
+print(clone.total_violation())
+clone.repair()
+print(clone.total_violation())
