@@ -2,7 +2,6 @@ import sklearn.neighbors
 import sklearn.cluster
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import re
 import termcolor
 
@@ -234,3 +233,27 @@ def delete_by_value(arr, value):
 
 def matrix_row_to_array(row):
     return np.asarray(row).squeeze()
+
+
+def find_neighbourhood(D, n_closest, ignore_indices=None):
+    L = []
+    for i, row in enumerate(D):
+        indices = np.argsort(row)
+        indices = delete_by_value(indices, i)
+        if ignore_indices is not None:
+            for each in ignore_indices:
+                indices = delete_by_value(indices, each)
+        entry = indices[:n_closest]
+        L.append(entry)
+
+    L = np.array(L)
+    return L
+
+
+def list_served_customers(individual):
+    I = individual
+    L = []
+    for paths in I.paths.values():
+        for path in paths:
+            L.append(path)
+    return np.unique(np.concatenate(L))
