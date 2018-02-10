@@ -171,5 +171,5 @@ def solve_tsp(X, start_index=None, circular_indices=False, run_2_opt=False, plot
 
 
 
-# X = make_problem(100)
-# sol2 = solve_tsp(X, start_index=0, plot=True, verbose=True, run_2_opt=True)
+X = make_problem(8)
+sol2 = solve_tsp(X, start_index=0, plot=True, verbose=True, run_2_opt=True)

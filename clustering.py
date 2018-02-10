@@ -4,7 +4,11 @@ import numpy as np  # noqa
 
 
 def nearest_depot(X, depots):
-    depot_coords = X[depots][:, [-1, 1]]
+    '''
+    depots: the indices in X for the depots
+    '''
+    # depot_coords = X[depots][:, [-1, 1]]
+    depot_coords = X[depots, :2]
     clf = sklearn.neighbors.NearestCentroid()
     clf.fit(depot_coords, depots)
 

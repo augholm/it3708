@@ -31,7 +31,7 @@ class MDVRPModel():
         self.best_score = np.inf
         self.best_count = 0
         self.mean_violations = []
-        self.penalty_multiplier = 2
+        self.penalty_multiplier = 1
 
         if conf['generate_initial_population']:
             population_size = utils.get_population_size(conf, 0)
@@ -54,7 +54,7 @@ class MDVRPModel():
         population_size  = utils.profile_value(self.conf['population_profile'], 0, self.conf['num_generations'])
         if k > population_size: k = population_size
         if n > population_size: n = population_size
-        scores = np.array([each.fitness_score(self.penalty_multiplier) + each.total_violation() for each in self.population])
+        scores = np.array([each.fitness_score(self.penalty_multiplier) for each in self.population])
         # scores = np.array([each.fitness_score(self.penalty_multiplier) for each in self.population])
         # scores = np.array([each.total_violation() for each in self.population])
         # if np.random.choice((0, 1), p=(0.01, 0.99)):
@@ -81,16 +81,13 @@ class MDVRPModel():
         import copy
         child = copy.deepcopy(father), copy.deepcopy(mother)
 
-        n_depots = self.depots.shape[0]
-        n1, n2 = np.random.choice(np.arange(n_depots), 2)
-        n1, n2 = min(n1, n2), max(n1, n2)
-
-        # randomly select n1 depots to form A1
-        # randomly select n2 - n1 depots to form A2
-        A1 = np.random.choice(self.depots, n1)
-        A2 = np.random.choice(np.setdiff1d(self.depots, A1), n2 - n1, replace=False)
-        A_mix = np.setdiff1d(self.depots, np.concatenate((A1, A2)))
-        # import ipdb; ipdb.set_trace()
+        # partition the depot assignments in sets
+        data = np.random.permutation(np.array(self.depots, copy=True))
+        delim0, delim1 = np.random.choice(np.arange(data.shape[0]), size=2, replace=False)
+        delim0, delim1 = min(delim0, delim1), max(delim0, delim1)
+        A1 = data[:delim0]
+        A2 = data[delim0:delim1]
+        A_mix = data[delim1:]
 
         child = sample.Individual(self.X, self.depots, self.D, self.N, initialize=False)
         for d_idx in A1:
@@ -126,13 +123,16 @@ class MDVRPModel():
             pass
 
 
-        if child.average_capacity_infeasibility() > 0:
+        before = child.fitness_score()
+        if np.random.choice((0,1), p=(0.8, 0.2)):
+            child.RI(self.penalty_multiplier)
+        if child.average_capacity_infeasibility() > 0 and np.random.choice((0,1)):
             child.repair()
+        after = child.fitness_score()
 
         # child.route_improvement()
         # child.route_improvement()
-        child.RI(self.penalty_multiplier)
-        self.mutation(child, intra_depot=True)
+        # self.mutation(child, intra_depot=True)
         return child
 
     def mutation(self, individual, intra_depot):
@@ -152,7 +152,6 @@ class MDVRPModel():
             p_with_depot = np.hstack((d_idx, path, d_idx))
             new_path = i.solve_tsp(p_with_depot)
             if i.cost(p_with_depot) - 2 > i.cost(new_path):
-                # print(f'reduced cost by {i.cost(p_with_depot) - i.cost(new_path)}')
                 i.update_path(new_path, d_idx, p_idx)
 
         def single_customer_rerouting(path, d_idx, p_idx):
@@ -179,7 +178,6 @@ class MDVRPModel():
             i.move_customer(np.random.choice(p2), depot_id=d1_idx)
 
         # functions = [single_customer_rerouting, lambda x,y,z: improvement()]
-        # functions = [single_customer_rerouting]
         functions = [tsp]
         call = np.random.choice(functions)
         call(p, d_idx, p_idx)
@@ -192,11 +190,22 @@ class MDVRPModel():
         L = []
         for _ in range(n_children):
             pool = self.selection()
+            p1 = np.random.choice(pool)
+            similarities = [utils.similarity(p1, each) for each in self.population]
+            p2 = self.population[np.argmin(similarities)]
+
             p1, p2 = np.random.choice(pool, 2, replace=False)
             offspring = self.create_offspring(p1, p2)
             L.append(offspring)
 
         L = np.concatenate((L, self.population))
+
+        for each in L:
+            if each.total_violation() > 0 and np.random.choice((0, 1), p=(0.8, 0.2)):
+                each.repair()
+            if np.random.choice((0, 1), p=(.9, .1)):
+                self.mutation(each, True)
+
         scores = np.argsort([each.fitness_score(self.penalty_multiplier) for each in L])
         if scores[0] != self.best_score:
             self.best_score = scores[0]
@@ -210,8 +219,8 @@ class MDVRPModel():
         Penalty parameter adjustment
         '''
         if generation_step % 4 == 0:
+
             prop_feasible = np.mean(np.array(self.mean_violations) == 0)
-            # utils.cprint(f'[y]{prop_feasible:.2} are feasible solutions. multiplier is {self.penalty_multiplier}')
             if prop_feasible - 0.05 > self.conf['fraction_feasible_population']:
                 # allow more violations -- except if the multplier is low
                 if not self.penalty_multiplier <= 1:
@@ -219,13 +228,8 @@ class MDVRPModel():
             elif prop_feasible + 0.05 < self.conf['fraction_feasible_population']:
                 # allow fewer violations
                 self.penalty_multiplier *= 1.2
-                
 
-            
         self.best = scores[0]
-        # for each in L:
-        #     if np.random.choice((True, False), p=(0.3, 0.7)) is True:
-        #         self.mutation(each, intra_depot=intra_depot)
         if self.best_count >= 100:
             print('hey now I change')
             old_population = L[scores[:population_size // 4]]
@@ -245,16 +249,14 @@ class MDVRPModel():
     def visualize(self, step, ax=None):
         scores = np.array([each.fitness_score() for each in self.population])
         best_individual = self.population[scores.argmin()]
+        best_fit = best_individual.fitness_score(0)
         feasibility = best_individual.total_violation()
-
 
         if ax is None and len(plt.get_fignums()) == 0:
             fig, (ax0, ax1) = plt.subplots(1, 2)
         else:
             ax0, ax1 = plt.gcf().get_axes()
-        
-        best_individual.visualize(ax=ax0, title='best fit')
-        utils.cprint(f'step [y]{step}[w], mean score is [y]{scores.mean()}[w] and best is {best_individual.fitness_score()} ({feasibility}. Penalty multiplier is {self.penalty_multiplier})')
+
+        best_individual.visualize(ax=ax0, title=f'best fit ({best_fit:6.2f})')
+        utils.cprint(f'step [y]{step}[w], best score: [y]{best_individual.fitness_score(0):.5} ({feasibility})[w] mean score: [y]{scores.mean():.5}. [w]Penalty multiplier is[y] {float(self.penalty_multiplier):.3}')  # noqa
         plt.pause(0.05)
-
-

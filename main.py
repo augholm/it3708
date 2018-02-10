@@ -3,46 +3,44 @@
 #                       August Holm & Mikael Kvalvaer
 #######################################################################
 
-import sample
 import loader
 import numpy as np  # noqa
 from model import MDVRPModel
 import utils
 import matplotlib.pyplot as plt
-import parser
+import parser as configparser
 plt.ion()
 
-filename = 'data/problem/p01'
-# 01: 576 (610 best)
-# 02: 473 (502 best)
-# 03: 641 (746 best, 10%)
-# 04: 1001 (1238)
+filename = 'data/problem/p08'
 solution_file = 'data/solution/' + filename.split('/')[2] + '.res'
-with open(solution_file) as f:
-    optimal_score = float(f.readline().strip())
+
+'''
+
+  puzzle    optimal     achieved    comments
+  01:       576         580         700 iterations
+  02:       473         487         (600 iterations)
+  03:       641         673         (300 iterations)
+  04:       1001        1092        (1100 after 100 iterations)
+  05:       749         905         500 iterations -- stuck at 905 after 500 iterations
+  06:       876         113         200 iterations
+  07:       885
+  08:       4437        5362
+
+'''
 
 depots, customers = loader.load_dataset(filename)
-
-conf = parser.parse_config('configs/default.conf')
-# conf['lala']
-
-
-model = MDVRPModel(customers, depots, conf)
-
-model.evolve(3)
-one = model.population[0]
-
-# L = [each.fitness_score() for each in model.population]
-L = [each.fitness_score() for each in model.population]
-best = model.population[np.argmin(L)]
+conf = configparser.parse_config('configs/default.conf')
 
 if len(plt.get_fignums()) > 0:
     ax0, ax1 = plt.gcf().get_axes()
+else:
+    _, (ax0, ax1) = plt.subplots(1, 2)
 
-best.visualize(ax=ax0)
+model = MDVRPModel(customers, depots, conf)
+optimal_solution = utils.visualize_solution(model, solution_file)
 
-import copy
-clone = copy.deepcopy(np.random.choice(model.population))
-print(clone.total_violation())
-clone.repair()
-print(clone.total_violation())
+model.evolve(3)
+one = model.population[0]  # debug
+
+L = [each.fitness_score() for each in model.population]
+best = model.population[np.argmin(L)]

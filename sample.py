@@ -133,14 +133,14 @@ class Individual():
         L = []
         for k, demand in self.caps.items():
             d_idx, p_idx = k
-            capacity = self.X[d_idx, 2]
-            L.append(demand > capacity)
+            supply = self.X[d_idx, 2]
+            L.append(max(0, demand - supply))
 
-        penalty = np.mean(L)
+        penalty = np.sum(L)
 
         cost = sum(list(self.costs.values()))
 
-        return cost + cost * penalty * penalty_multiplier
+        return cost + penalty*penalty_multiplier
 
     def insert_customer(self, i, d_idx, p_idx, j, check_feasibility_after=False):
         '''
@@ -188,7 +188,11 @@ class Individual():
             One simple way would be to only allow moves if it does not break feasibility
             '''
             run = True
+            import time
+            start = time.time()
             while run:
+                if time.time() - start > 10:  # TODO: remove soon.
+                    import ipdb; ipdb.set_trace()
                 # if not repair_mode:
                 #     run = False
                 D = self.D
@@ -316,8 +320,7 @@ class Individual():
                     scores = deltas + penalty * penalty_multiplier
 
                 action, idx = np.unravel_index(scores.argmin(), scores.shape)
-                if scores[action,idx] >= 0:
-                    # print(f'{u} is done')
+                if scores[action, idx] >= -1e-08:
                     run = False
                     break
                 # print(f'u is {u}. expected delta: {pdeltas[action,idx]}. Expected reduction in feas.: {reduced_violations[action,idx]}. action/idx {action,idx}')
@@ -518,12 +521,13 @@ class Individual():
         if self.average_capacity_infeasibility() == 0:
             return
         step1 = self.total_violation()
-        self.RI(penalty_multiplier=10, repair_mode=True, repair_multiplier=5)
-        if self.average_capacity_infeasibility() == 0:
+        self.RI(penalty_multiplier=1, repair_mode=True, repair_multiplier=5)
+        if self.total_violation() == 0:
             return
         step2 = self.total_violation()
-        self.RI(penalty_multiplier=100, repair_mode=True, repair_multiplier=5)
-        step3 = self.total_violation()
+        self.RI(penalty_multiplier=10, repair_mode=True, repair_multiplier=10)
+        if self.total_violation() == 0:
+            self.RI(penalty_multiplier=1000, repair_mode=True, repair_multiplier=10)
         # b = step1 >= step2 >= step3
         # b = '[y]yes' if b else '[r]no'
         # utils.cprint(f'{b}, [w]{step1}, {step2}, {step3}')
@@ -590,11 +594,11 @@ class Individual():
         x = None
         while x is None:
             k += 1
-            if k == 10:
+            if k == self.N.shape[1]:
                 break
             j = self.N[i, k]
             x = self.find_customer(j)
-        if k == 10:
+        if k == self.N.shape[1]:
             # utils.cprint('[y]Warning could not insert customer properly')
             _, d_idx, p_idx = utils.choose_random_paths(self, include_indices=True, min_length=0)[0]
         else:

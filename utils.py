@@ -122,6 +122,41 @@ def visualize_closest_depot(customers, depots, ax=None):
     plt.scatter(xx.ravel(), yy.ravel(), c=Z, alpha=0.1)
 
 
+def visualize_solution(model, solution_file, ax=None):
+    '''
+    Just a quick function to see the best solution
+    '''
+
+    import copy
+    one = copy.deepcopy(model.population[0])
+
+    with open(solution_file) as f:
+        L = []
+        indices = []
+        optimal_score = f.readline()
+        for line in f:
+            if '   ' in line:
+                d_idx, p_idx, _, _, seq = line.strip().split('   ')
+                d_idx = np.int64(d_idx) - 1
+                p_idx = np.int64(p_idx) - 1
+                d_idx = one.depots[d_idx]
+                indices.append((d_idx, p_idx))
+
+                new_seq = np.fromstring(seq, np.int64, sep=' ')[1:-1] - 1
+                L.append(new_seq)
+
+    for p, c, cap, d_idx, p_idx in one.iter_paths(yield_path_idx=True, yield_depot_idx=True):
+        one.update_path(np.array([], np.int64), d_idx, p_idx)
+
+    for path, (d_idx, p_idx) in zip(L, indices):
+        one.update_path(np.array(path, np.int64), d_idx, p_idx, check_feasibility_after=False)
+
+    if ax is None:
+        ax = plt.gcf().get_axes()[1]
+    one.visualize(ax=ax, title=f'optimal solution (score {optimal_score})')
+    return one
+
+
 def choose_random_paths(individual, n=1, min_length=1, depot_id=None, include_indices=False, include_depot=False):
     '''
     From an individual, choose random `n` random paths each with length at
@@ -256,4 +291,15 @@ def list_served_customers(individual):
     for paths in I.paths.values():
         for path in paths:
             L.append(path)
+    if len(L) == 0:  # it could also be the case that no paths exists
+        return np.array([])
+
     return np.unique(np.concatenate(L))
+
+
+def similarity(i1, i2):
+    '''
+    Measures the distance between two individuals. The similarity
+    measure is the manhattan distance on the path assignments
+    '''
+    return (i1.assignment_info[:, 0] == i2.assignment_info[:, 0]).mean()
