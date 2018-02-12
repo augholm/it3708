@@ -10,7 +10,7 @@ def load_dataset(filename):
     filename:
         path to filename, e.g 'data/problem/p01'
 
-    returns the tuple (depots, customers)
+    returns the tuple (depots, customers, n_paths_perdepot)
         customers: np.array of shape (N, 5)
             where N is the number of customers
             where each row is (i, x, y, d, q)
@@ -19,7 +19,7 @@ def load_dataset(filename):
                 y: int, y-coordinate
                 d: int, necessary service duration required for this customer
                 q: int, demand for this customer
-            
+
         depots: np.array of shape (N, 8)
             where N is the number of depots
             where each row is (i, x, y, d, q, m, D, Q)
@@ -37,6 +37,7 @@ def load_dataset(filename):
             L.append(parsed_line)
 
     m, n, t = L[0]
+    n_paths_per_depot = m
     X = np.array(L[1:1+t])
     D, Q = X[:, 0], X[:, 1]
     X = np.array(L[1+t:], dtype=np.int64)
@@ -48,4 +49,4 @@ def load_dataset(filename):
     Q = Q.reshape((t, 1))
     depots = np.hstack([X[-t:, :], m, D, Q])
 
-    return (depots, customers)
+    return (depots, customers, n_paths_per_depot)

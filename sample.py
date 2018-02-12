@@ -9,7 +9,7 @@ import clustering
 import utils
 
 class Individual():
-    def __init__(self, X, depots, D, N, initialize=True):
+    def __init__(self, X, depots, D, N, n_paths_per_depot, initialize=True):
         '''
         X: np array of shape (N+M, 5) -- each row is (x, y, z, a, b) and there are 
             x: x-coordinate
@@ -20,7 +20,9 @@ class Individual():
 
         depots: np.array of indices in X that is the depot. shape (M,)
 
-        D: np.array of shape (M+N, M+N)
+        D: np.array of shape (M+N, M+N). Contains the euclidean distance
+        from customer i to customer j in D[i, j]. D[0, j] is the distance
+        from depot to customer j.
 
         '''
 
@@ -29,19 +31,27 @@ class Individual():
         self.D = D
         self.depots = depots
 
+        self.safe_mode = True
+
         self.n_customers = self.X.shape[0] - self.depots.shape[0]
+        self.n_paths_per_depot = n_paths_per_depot
+
         '''
-        (depot_index, path_index, index in the path (ex. depot), previous element, nxt element)
+        each row in `assignment_info` has the following data:
+            0-2: d_idx, p_idx, index in path
+            3-4: previous element, next element
+            5: capacity of that path
+
+        This data is redundant, and it is used to speed up calculations. It's
+        basically used for caching.
         '''
-        self.assignment_info = np.ones((self.X.shape[0], 5), np.int64) * -1
+        self.assignment_info = np.ones((self.X.shape[0], 6), np.int64) * -1
         for idx in self.depots:
-            # make next and previous the same as depot. It's ending station :)
-            self.assignment_info[idx] = np.array([-1, -1, -1, idx, idx])
+            self.assignment_info[idx] = np.array([-1, -1, -1, idx, idx, -1])
 
         '''
         paths: dictionary of arrays. Each element in array is np.array
         consisting of indices in the path
-
         '''
         self.paths = collections.defaultdict(lambda: [])
         self.costs = {}
@@ -61,17 +71,19 @@ class Individual():
             for each in np.unique(partition):
                 path = indices[partition == each]
                 path = np.hstack((d_idx, path, d_idx))
+                old_path = np.array(path, copy=True)
+                # path = old_path
                 path = self.solve_tsp(path)
                 L.append(path[1:-1])
 
-            # while len(L) < 4:
-            #     L.append(np.array([], dtype=np.int64))
+            while len(L) < self.n_paths_per_depot:
+                L.append(np.array([], dtype=np.int64))
             self.paths[d_idx] = L
 
         for p, _, _, d_idx, p_idx in self.iter_paths(include_depot=False,
                                                      yield_depot_idx=True,
                                                      yield_path_idx=True):
-            self.update_path(p, d_idx, p_idx, check_feasibility_after=True)
+            self.update_path(p, d_idx, p_idx, check_feasibility_after=self.safe_mode)
 
     ##############################################################################
     # utility functions
@@ -99,7 +111,7 @@ class Individual():
         self.caps[(d_idx, p_idx)] = cap
 
         for idx, i in enumerate(path[1:-1]):
-            self.assignment_info[i] = np.array([d_idx, p_idx, idx, path[idx], path[idx+2]])
+            self.assignment_info[i] = np.array([d_idx, p_idx, idx, path[idx], path[idx+2], cap])
             # self.depot_assignments[i] = d_idx
             # self.path_assignments[i] = p_idx
             # self.path_indices[i] = idx
@@ -167,11 +179,8 @@ class Individual():
             return None
         else:
             return ret_val
-        # for x in self.iter_paths(yield_depot_idx=True, yield_path_idx=True):
-        #     p, c, cap, d_idx, p_idx = x
-        #     if i in p:
-        #         return d_idx, p_idx
 
+    # @utils.do_profile
     def RI(self, penalty_multiplier=1, repair_mode=False, repair_multiplier=1):
         # print('before:', self.fitness_score(0))
         if repair_mode:
@@ -188,13 +197,9 @@ class Individual():
             One simple way would be to only allow moves if it does not break feasibility
             '''
             run = True
-            import time
-            start = time.time()
             while run:
-                if time.time() - start > 10:  # TODO: remove soon.
-                    import ipdb; ipdb.set_trace()
-                # if not repair_mode:
-                #     run = False
+                if not repair_mode:
+                    run = False
                 D = self.D
                 N = self.N
 
@@ -202,9 +207,9 @@ class Individual():
 
                 V = N[u,:]
                 Q = self.assignment_info[V,:2]
-                L = []
-                for each in Q:
-                    L.append(self.caps[tuple(each)])
+                ## L = []
+                ## for each in Q:
+                ##     L.append(self.caps[tuple(each)])
                 u_path_demand = self.caps[du_idx, pu_idx]
 
 
@@ -216,13 +221,18 @@ class Individual():
 
                 self.assignment_info: (depot_index, path_index, index in the path (ex. depot), previous element, nxt element)
                 '''
-                u_path_with_depots = np.hstack((du_idx, self.paths[du_idx][pu_idx], du_idx))
+                # u_path_with_depots = np.hstack((du_idx, self.paths[du_idx][pu_idx], du_idx))
+                u_path_with_depots = np.concatenate([[du_idx], self.paths[du_idx][pu_idx], [du_idx]])
+                a, u, b = u_path_with_depots[u_idx:u_idx+3]
+
                 X = self.assignment_info[V, :]
                 F, V, G, H = X[:, 3], V, X[:, 4], self.assignment_info[X[:, 4], 4]
-                a, u, b = u_path_with_depots[u_idx:u_idx+3]
                 c = self.assignment_info[b, 4]
-
-                same_path_mask = np.all(X[:,[0,1]] == np.array([du_idx, pu_idx]), axis=1)
+                L = []
+                # for d_idx, p_idx in self.assignment_info[V, :2]:
+                #     L.append(self.caps[d_idx, p_idx])
+                # V_path_demand = np.array(L)  # checked: seem correct
+                V_path_demand = self.assignment_info[V, 5]
 
                 u_demand, b_demand = self.X[u, 2], self.X[b, 2]
                 u_path_supply = self.X[du_idx, 2]
@@ -230,33 +240,29 @@ class Individual():
                 V_demand, G_demand = self.X[V, 2], self.X[G, 2]
                 V_path_supply = self.X[X[:, 0], 2]
 
-                L = []
-                for d_idx, p_idx in self.assignment_info[V, :2]:
-                    L.append(self.caps[d_idx, p_idx])
-                V_path_demand = np.array(L)  # checked: seem correct
-
+                same_path_mask = np.all(X[:, [0, 1]] == np.array([du_idx, pu_idx]), axis=1)
 
                 '''
                 STEP 2 --- find the change in violation if action is done.
                 '''
                 zeros = np.zeros_like(V_path_demand)
-                Q_v = np.vstack((
+                Q_V = np.vstack((
                     zeros + u_demand,
                     zeros + u_demand + b_demand,
                     zeros + u_demand + b_demand,
                     zeros - V_demand + u_demand,
                     zeros - V_demand + u_demand + b_demand,
                     zeros - V_demand - G_demand + u_demand + b_demand))
-                Q_V = np.array(Q_v, copy=True)
+                # Q_V = np.array(Q_v, copy=True)
 
-                Q_u = np.vstack((
+                Q_U = np.vstack((
                     zeros - u_demand,
                     zeros - u_demand - b_demand,
                     zeros - u_demand - b_demand,
                     zeros - u_demand + V_demand,
                     zeros - u_demand - b_demand + V_demand,
                     zeros - u_demand - b_demand + V_demand + G_demand))
-                Q_U = np.array(Q_u, copy=True)
+                # Q_U = np.array(Q_u, copy=True)
 
                 V_violations = V_path_demand - V_path_supply
                 u_violation = u_path_demand - u_path_supply
@@ -368,8 +374,10 @@ class Individual():
                 if not repair_mode:
                     before = self.total_violation()
                     sb = self.fitness_score(0)
+                self.is_feasible(1)
+
                 self.update_path(new_u_path, du_idx, pu_idx, check_feasibility_after=False)
-                self.update_path(new_v_path, dv_idx, pv_idx, check_feasibility_after=True)
+                self.update_path(new_v_path, dv_idx, pv_idx, check_feasibility_after=self.safe_mode)
                 if not repair_mode:
                     after = self.total_violation()
                     sa = self.fitness_score(0)
@@ -504,7 +512,7 @@ class Individual():
                             print(v_path, '->', new_path_v)
                             print(u,v, opt)
                         self.update_path(new_path_u, du_idx, pu_idx, check_feasibility_after=False)
-                        self.update_path(new_path_v, dv_idx, pv_idx, check_feasibility_after=True)
+                        self.update_path(new_path_v, dv_idx, pv_idx, check_feasibility_after=self.safe_mode)
                         done = True
                         break
 
@@ -608,6 +616,7 @@ class Individual():
         D = self.D
         delta = D[P[:-1], i] + D[i, P[1:]] - D[P[:-1], P[1:]]
         idx = np.argmin(delta)
+        # TODO: theres some bug here
         new_path = np.hstack((P[:idx+1], i, P[idx+1:]))
         if len(new_path) > 3 and len(np.unique(new_path[1:-1])) != len(new_path[1:-1]):
             import ipdb; ipdb.set_trace()
@@ -673,8 +682,10 @@ class Individual():
         if path[0] != path[-1] or len(path) <= 1:
             raise Exception('wrong type path')
 
-        indices = optimization.solve_tsp(self.X[path, 0:2], circular_indices=False, start_index=0)
+        indices = optimization.solve_tsp(self.X[path[:-1], 0:2], circular_indices=False, start_index=0)
         new_path = path[indices]
+        if not np.all(np.sort(path) == np.sort(new_path)):
+            import ipdb; ipdb.set_trace()
         if len(np.unique(new_path[1:-1])) != len(new_path[1:-1]):
             import ipdb; ipdb.set_trace()
         if path[0] != path[-1] and len(path) > 1:

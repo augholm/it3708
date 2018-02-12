@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import re
 import termcolor
+from line_profiler import LineProfiler
 
 
 def profile_value(profile, step, num_generations):
@@ -248,9 +249,11 @@ def euclidean_dist(X):
 
 def all_euclidean_dist(X):
     '''
+    TODO: this can be improved.
     excpeted: Nx2 array of xy-coordinates.
     '''
     L = []
+
     for i, each in enumerate(X):
         relative_locs = X[:] - each
         distances = np.sqrt(np.sum(relative_locs ** 2, axis=1))
@@ -303,3 +306,19 @@ def similarity(i1, i2):
     measure is the manhattan distance on the path assignments
     '''
     return (i1.assignment_info[:, 0] == i2.assignment_info[:, 0]).mean()
+
+
+def do_profile(follow=[]):
+    def inner(func):
+        def profiled_func(*args, **kwargs):
+            try:
+                profiler = LineProfiler()
+                profiler.add_function(func)
+                for f in follow:
+                    profiler.add_function(f)
+                profiler.enable_by_count()
+                return func(*args, **kwargs)
+            finally:
+                profiler.print_stats()
+        return profiled_func
+    return inner

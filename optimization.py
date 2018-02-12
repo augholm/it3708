@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial import ConvexHull
 from tqdm import tqdm
+import utils
 
 plt.ion()
 
@@ -48,7 +49,8 @@ def solve_tsp(X, start_index=None, circular_indices=False, run_2_opt=False, plot
     '''
     if X.shape[0] <= 3:
         # utils.cprint('[y]Warning: cannot solve TSP; too few points. Aborting')
-        return np.arange(X.shape[0])
+        return np.hstack((np.arange(X.shape[0]), 0))
+        # return np.arange(X.shape[0])
 
     try:
         hull = ConvexHull(X)
@@ -149,7 +151,8 @@ def solve_tsp(X, start_index=None, circular_indices=False, run_2_opt=False, plot
 
     # get rid of the 'end' of the path, because we know it's the same as the first
     n_points = X.shape[0]
-    vertices = utils.delete_by_value(vertices, n_points-1)
+    # import ipdb; ipdb.set_trace()
+    # vertices = utils.delete_by_value(vertices, n_points-1)
 
     if start_index is not None:
         if start_index == vertices[0]:
@@ -162,7 +165,8 @@ def solve_tsp(X, start_index=None, circular_indices=False, run_2_opt=False, plot
                 --> vertices = [3, 9, 1, 6, 7, 0, 5, 2, 4, 8, 3]
             '''
             idx = np.argwhere(vertices == start_index)[0][0]
-            vertices = np.hstack((vertices[idx:], vertices[1:idx], vertices[idx]))
+            vertices = np.concatenate((vertices[idx:-1], vertices[:idx+1]))
+            pass
 
     if circular_indices:
         return np.hstack((vertices, vertices[0]))
@@ -170,6 +174,132 @@ def solve_tsp(X, start_index=None, circular_indices=False, run_2_opt=False, plot
         return vertices
 
 
+def split(X, Q, capacity, input_args_check=True):
+    '''
+    X np.array of shape (t+2). Consists of the xy-coordinates of the t customers,
+    as well as the depot which is located in X[0] and X[-1].
 
-X = make_problem(8)
-sol2 = solve_tsp(X, start_index=0, plot=True, verbose=True, run_2_opt=True)
+    Q: np.array of shape t, consisting of the capacities
+    capacity: int, the upper limit of the capacity
+
+    Example:
+        X = array([[0, 0, 100],
+                   [0, 5, 3],
+                   [7, 7, 50]])
+        depot is at (0, 0) with supply 100. Customer 0 is at (0, 5) with demand 3, etc.
+
+    returns: (L, cost)
+        L: list of np.arrays, consists of the indices for each subtour
+        cost: total cost (euclidean)
+    '''
+
+    '''
+    Step 0 --- check if data is correct
+    '''
+    if input_args_check:
+        if not Q.min() >= 0:
+            raise ValueError('Q must be non-negative')
+
+        # if not np.all(X[0, :] == X[-1, :]):
+        #     raise ValueError('''Expected first and last row of X to be equal
+        #     as they represent the coordinate of the depot.''')
+
+        if capacity < Q.max():
+            raise ValueError('''Cannot be solved as the highest demand from a
+            customer exceeds capacity''')
+
+    '''
+    Step 1 --- sort according to a big tour and find distance matrix
+    '''
+    indices = solve_tsp(X, start_index=0, plot=False)
+    indices = indices[:-1]
+
+    # knowing that `indices` also includes the depot at the beginning and end,
+    # we need to remove the depot (index 0) and make index 1 to index 0 by
+    # subtracting.
+    _maxint = np.iinfo(np.int64).max
+
+    customer_indices = indices[1:-1] - 1
+
+    S = indices
+    Q = np.hstack((_maxint, Q))
+    # Q = Q[customer_indices]
+    D = utils.all_euclidean_dist(X[indices])
+    V = np.ones(X.shape[0], np.int64) * _maxint
+    V[0] = 0
+    P = np.ones(X.shape[0], np.int64) * -1
+
+    I = np.random.permutation(indices)
+
+    '''
+    Step 2 --- solve this boy
+    '''
+
+    # we can be certain to not have a path that exceeds b units
+    b = int(capacity / np.min(Q))  # noqa
+    
+    # import ipdb; ipdb.set_trace()
+    P[S[1]] = 0  # set this guy to the depot
+    for i_idx, i in enumerate(S[1:], 1):
+        load = Q[i]
+        cost = D[0, i] + D[i, 0]
+        if V[i] == _maxint:
+            V[i] = cost
+        for j_idx, j in enumerate(S[i_idx+1:], i_idx+1):
+            load += Q[j]
+            cost = cost - D[S[j_idx-1],0] + D[S[j_idx-1],j] + D[j,0]
+
+            if load <= capacity and V[i] + cost < V[j]:
+                V[j] = V[i] + cost
+                P[j] = i
+            else:
+                break  # no point in going further
+        if P[i] == -1:
+            import ipdb; ipdb.set_trace()
+            pass
+
+    L = []
+
+    from_ = S.shape[0]
+
+    import time
+    start = time.time()
+    # desired: [2,3,4,5], [7,1], [0,6]
+    while True:
+        if time.time() - start >= 5:
+            import ipdb; ipdb.set_trace()
+        c = S[from_ - 1]
+        parent = P[c]
+        if parent == -1:
+            break
+
+        from_ = np.asscalar(np.argwhere(S == parent))
+        to = np.asscalar(np.argwhere(S == c))
+        if parent == 0:
+            seq = S[from_+1:to+1]
+        else:
+            seq = S[from_:to+1]
+        L.append(seq)
+
+        if parent == 0:
+            break
+    cost = V[S[-1]]
+
+    return L, cost
+
+
+
+# X = make_problem(25)
+# Q = np.random.choice(np.arange(1, 21), size=X.shape[0]-1)
+# L, cost = split(X, Q, capacity=100)
+# 
+# from cycler import cycler
+# ax = plt.gcf().get_axes()[0]
+# ax.clear()
+# ax.set_prop_cycle(cycler('linestyle', '- -- : -.'.split()))
+# ax.scatter(X[:, 0], X[:, 1], c='y')
+# ax.scatter(X[0, 0], X[0, 1], c='r', marker='*')
+# for each in L:
+#     each = np.hstack((0, each, 0))
+#     ax.plot(X[each, 0], X[each, 1], 'b', alpha=0.7)
+# 
