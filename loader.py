@@ -29,11 +29,17 @@ def load_dataset(filename):
                 Q: int, maximum load for a vehicle in that depot (typically 80)
     '''
     L = []
+    durations = []
     with open(filename) as f:
         for line in f:
             parsed_line = list(map(int, re.split('\s+', line.strip())))
             if len(parsed_line) >= 5:
                 parsed_line = parsed_line[:5]
+            if len(parsed_line) == 2:
+                duration, _ = parsed_line
+                if duration == 0:
+                    duration = np.iinfo(np.int64).max
+                durations.append(duration)
             L.append(parsed_line)
 
     m, n, t = L[0]
@@ -49,4 +55,6 @@ def load_dataset(filename):
     Q = Q.reshape((t, 1))
     depots = np.hstack([X[-t:, :], m, D, Q])
 
-    return (depots, customers, n_paths_per_depot)
+    durations = np.array(durations, np.int64)
+
+    return (depots, customers, durations, n_paths_per_depot)
