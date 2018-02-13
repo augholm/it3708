@@ -33,7 +33,7 @@ solution_file = 'data/solution/' + filename.split('/')[2] + '.res'
 
 '''
 
-depots, customers, n_paths_per_depot  = loader.load_dataset(filename)
+depots, customers, durations, n_paths_per_depot  = loader.load_dataset(filename)
 conf = configparser.parse_config('configs/default.conf')
 
 if len(plt.get_fignums()) > 0:
@@ -44,7 +44,7 @@ else:
 model = MDVRPModel(customers, depots, n_paths_per_depot, conf)
 optimal_solution = utils.visualize_solution(model, solution_file)
 
-model.evolve(25)
+model.evolve(3)
 one = model.population[0]  # debug
 
 
