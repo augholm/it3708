@@ -16,5 +16,10 @@ def nearest_depot(X, depots):
     customers_mask[depots] = False
     customer_locs = X[customers_mask, 0:2]
 
+    #Add noise to customer locations
+    for customer in customer_locs:
+    	for coord in customer:
+    		coord += np.random.normal(loc=coord)
+
     Y = clf.predict(customer_locs)
     return Y
