@@ -40,7 +40,7 @@ class MDVRPModel():
         self.mean_violations = []
 
         self.demand_penalty = 1
-        self.duration_penalty = 1000
+        self.duration_penalty = 10
 
         if conf['generate_initial_population']:
             population_size = utils.get_population_size(conf, 0)
@@ -136,6 +136,9 @@ class MDVRPModel():
             child.RI(self.demand_penalty)
         if child.average_capacity_infeasibility() > 0 and np.random.choice((0,1)):
             child.repair()
+        
+        if child.total_duration_violation() > 0 and np.random.choice((0, 1)):
+            child.repair_duration()
 
         if np.random.choice((0, 1), p=(0.2, 0.8)) == 1:
             self.mutation(child, intra_depot=True)
@@ -189,6 +192,7 @@ class MDVRPModel():
             # situation 2: we found more new paths than existing paths. Abort
             # as we don't know how to handle this
             # import ipdb; ipdb.set_trace()
+            n_empty_paths = sum([len(each) == 0 for each in i.paths[d_idx]])
             if (cost >= prev_cost) or (len(new_paths) > len(L)):
                 return
 

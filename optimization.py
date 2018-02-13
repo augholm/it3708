@@ -56,7 +56,7 @@ def solve_tsp(X, start_index=None, circular_indices=False, run_2_opt=False, plot
         hull = ConvexHull(X)
     except:
         utils.cprint('[y]Warning: cannot solve TSP; too few points. Aborting')
-        return np.arange(X.shape[0])
+        return np.concatenate((np.arange(X.shape[0]), [0]))
         
 
     D = utils.all_euclidean_dist(X)

@@ -50,28 +50,3 @@ one = model.population[0]  # debug
 
 L = [each.fitness_score() for each in model.population]
 best = model.population[np.argmin(L)]
-
-# 
-# 
-# 
-# 
-# 
-# 
-# 
-# 
-# 
-# 
-# 
-# 
-# 
-# 
-# def get_number():
-#     for x in np.arange(50000):
-#         yield x
-# 
-# one = model.population[1]
-# @utils.do_profile(follow=[one.RI])
-# def expensive_function():
-#     one.RI()
-# 
-# result = expensive_function()

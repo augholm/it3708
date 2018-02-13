@@ -8,6 +8,7 @@ import optimization
 import clustering
 import utils
 
+
 class Individual():
     def __init__(self, X, depots, D, N, durations, n_paths_per_depot, initialize=True):
         '''
@@ -147,7 +148,7 @@ class Individual():
         t_dur = self.total_duration_violation()
         t_dem = self.total_demand_violation()
 
-        return (total_path_cost + 
+        return (total_path_cost +
                 t_dem * demand_penalty +
                 t_dur * duration_penalty)
 
@@ -544,6 +545,38 @@ class Individual():
         if self.average_capacity_infeasibility() == 0:
             pass
 
+    def repair_duration(self):
+        '''
+        ad-hoc function that tries to repair duration for paths
+        '''
+
+        D = self.D
+        bef = self.total_duration_violation()
+        for p, cost, _, d_idx, p_idx in self.iter_paths(yield_depot_idx=True, yield_path_idx=True):
+            if self.durations[d_idx] < cost:
+                excess = cost - self.durations[d_idx]
+                path = self.paths[d_idx][p_idx]
+                path_with_depot = np.hstack((d_idx, path, d_idx))
+                pwd = path_with_depot
+                delta = -D[pwd[:-2],path] - D[path,pwd[2:]] + D[pwd[:-2],pwd[2:]]
+
+                # True in mask indicates that we will get rid of infeasibility for this route
+                mask = delta + excess < 0
+                if not np.any(mask):
+                    idx = np.argmin(delta)
+                    customer = path[idx]
+                else:
+                    idx = np.random.choice(np.argwhere(mask).flatten())
+                    customer = path[idx]
+                d_cands = self.depots[self.depots != d_idx]
+                self.move_customer(customer, depot_id=d_cands)
+
+        aft = self.total_duration_violation()
+        # import ipdb; ipdb.set_trace()
+
+
+
+
     
 
     def iter_paths(self, depot_id=None, include_depot=False, yield_depot_idx=False, yield_path_idx=False):
@@ -599,20 +632,27 @@ class Individual():
                 for each in self.iter_paths(depot_id=d_idx, include_depot=include_depot, yield_depot_idx=yield_depot_idx, yield_path_idx=yield_path_idx):
                     yield each
 
-    def optimally_insert_customer(self, i):
-        k = -1
-        x = None
-        while x is None:
-            k += 1
-            if k == self.N.shape[1]:
-                break
-            j = self.N[i, k]
-            x = self.find_customer(j)
-        if k == self.N.shape[1]:
-            # utils.cprint('[y]Warning could not insert customer properly')
-            _, d_idx, p_idx = utils.choose_random_paths(self, include_indices=True, min_length=0)[0]
-        else:
-            d_idx, p_idx = x
+    def optimally_insert_customer(self, i, depot_id=None):
+        '''
+        depot_id: int or list of ints
+        '''
+
+        # that way, if depot_id is int, we now treat it as an array.
+        if depot_id is not None:
+            depot_id = np.array(depot_id, np.int64)
+
+        # just find a random path initially, but try to find closest path for i
+        _, d_idx, p_idx = utils.choose_random_paths(self, depot_id=depot_id, include_indices=True, min_length=0)[0]
+        for k in range(self.N.shape[1]):
+            neighbour_customer = self.N[i, k]
+            x = self.find_customer(neighbour_customer)
+            if x is not None:
+                if depot_id is None:
+                    d_idx, p_idx = x
+                    break
+                elif depot_id is not None and x[0] in depot_id:
+                    d_idx, p_idx = x
+                    break
 
         P = np.hstack((d_idx, self.paths[d_idx][p_idx], d_idx))
         D = self.D
@@ -637,9 +677,11 @@ class Individual():
         '''
         i: the index of the customer
         strategy: 'best'|'random'
+        depot_id: int or list
         '''
 
         self.delete_customer(i)
+        # self.optimally_insert_customer(i, depot_id=depot_id)
         self.optimally_insert_customer(i)
 
         # d_idx, p_idx = self.find_customer(i)
