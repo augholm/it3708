@@ -322,3 +322,32 @@ def do_profile(follow=[]):
                 profiler.print_stats()
         return profiled_func
     return inner
+
+
+def hamming_distance(i1, population):
+    hamming_distance = 0
+    depot_assignments = i1.assignment_info[:,0]
+
+    for individual in population:
+        absolute_diffs = np.absolute(depot_assignments-indivudual.assignment_info[:,-1])
+        hamming_distance += sum(absolute_diffs)
+
+    return hamming_distance
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

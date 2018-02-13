@@ -10,13 +10,12 @@ import utils
 
 class Individual():
     def __init__(self, X, depots, D, N, n_paths_per_depot, initialize=True):
+        #TODO insert service duration into X so we can check for  service duration violations
         '''
         X: np array of shape (N+M, 5) -- each row is (x, y, z, a, b) and there are 
             x: x-coordinate
             y: y-coordinate
             z: demand if customer, supply if depot
-            a: the depot it belongs to
-            b: path index for that depot
 
         depots: np.array of indices in X that is the depot. shape (M,)
 
@@ -717,4 +716,31 @@ class Individual():
         if title is not None:
             ax.set_title(title)
         pass
+
+
+def diversity_contribution(self, n_close):
+    total_hamming_distance = 0
+    for individual in n_close:
+        total_hamming_distance += hamming_distance(self, individual)
+
+    return total_hamming_distance/float(len(n_close))
+
+def biased_fitness(self, population, n_close):
+    diversity_contribution = 0.9*diversity_contribution(self, n_close)
+    biased_fitness = fitness_score(self, penalty_multiplier=0) + diversity_contribution
+
+    return biased_fitness
+
+
+
+
+
+
+
+
+
+
+
+
+
 
