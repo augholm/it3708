@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import parser as configparser
 plt.ion()
 
-filename = 'data/problem/p04'
+filename = 'data/problem/p20'
 solution_file = 'data/solution/' + filename.split('/')[2] + '.res'
 
 '''
@@ -33,7 +33,7 @@ solution_file = 'data/solution/' + filename.split('/')[2] + '.res'
 
 '''
 
-depots, customers, n_paths_per_depot  = loader.load_dataset(filename)
+depots, customers, durations, n_paths_per_depot  = loader.load_dataset(filename)
 conf = configparser.parse_config('configs/default.conf')
 
 if len(plt.get_fignums()) > 0:
@@ -41,10 +41,10 @@ if len(plt.get_fignums()) > 0:
 else:
     _, (ax0, ax1) = plt.subplots(1, 2)
 
-model = MDVRPModel(customers, depots, n_paths_per_depot, conf)
+model = MDVRPModel(customers, depots, durations, n_paths_per_depot, conf)
 optimal_solution = utils.visualize_solution(model, solution_file)
 
-model.evolve(25)
+model.evolve(3)
 one = model.population[0]  # debug
 
 

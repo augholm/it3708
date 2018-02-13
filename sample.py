@@ -9,7 +9,7 @@ import clustering
 import utils
 
 class Individual():
-    def __init__(self, X, depots, D, N, n_paths_per_depot, initialize=True):
+    def __init__(self, X, depots, D, N, durations, n_paths_per_depot, initialize=True):
         '''
         X: np array of shape (N+M, 5) -- each row is (x, y, z, a, b) and there are 
             x: x-coordinate
@@ -30,6 +30,7 @@ class Individual():
         self.N = N
         self.D = D
         self.depots = depots
+        self.durations = durations
 
         self.safe_mode = True
 
@@ -140,19 +141,15 @@ class Individual():
 
         return self.D[path[:-1], path[1:]].sum()
 
-    def fitness_score(self, penalty_multiplier=0):
-        self.depots
-        L = []
-        for k, demand in self.caps.items():
-            d_idx, p_idx = k
-            supply = self.X[d_idx, 2]
-            L.append(max(0, demand - supply))
+    def fitness_score(self, demand_penalty=0, duration_penalty=0):
+        total_path_cost = sum(list(self.costs.values()))
 
-        penalty = np.sum(L)
+        t_dur = self.total_duration_violation()
+        t_dem = self.total_demand_violation()
 
-        cost = sum(list(self.costs.values()))
-
-        return cost + penalty*penalty_multiplier
+        return (total_path_cost + 
+                t_dem * demand_penalty +
+                t_dur * duration_penalty)
 
     def insert_customer(self, i, d_idx, p_idx, j, check_feasibility_after=False):
         '''
@@ -181,7 +178,7 @@ class Individual():
             return ret_val
 
     # @utils.do_profile
-    def RI(self, penalty_multiplier=1, repair_mode=False, repair_multiplier=1):
+    def RI(self, supply_penalty=1, repair_mode=False, repair_multiplier=1):
         # print('before:', self.fitness_score(0))
         if repair_mode:
             customers = []
@@ -318,12 +315,12 @@ class Individual():
                 scores = np.zeros_like(deltas)
 
                 if repair_mode:
-                    if self.total_violation() == 0:
+                    if self.total_demand_violation() == 0:
                         return
                     scores = deltas - reduced_violations * repair_multiplier
                 else:
                     penalty = np.clip(-reduced_violations, 0, 10000)
-                    scores = deltas + penalty * penalty_multiplier
+                    scores = deltas + penalty * supply_penalty
 
                 action, idx = np.unravel_index(scores.argmin(), scores.shape)
                 if scores[action, idx] >= -1e-08:
@@ -372,14 +369,14 @@ class Individual():
                     print(f'{v_path} -> {new_v_path}')
                     print(action, u, v)
                 if not repair_mode:
-                    before = self.total_violation()
+                    before = self.total_demand_violation()
                     sb = self.fitness_score(0)
                 self.is_feasible(1)
 
                 self.update_path(new_u_path, du_idx, pu_idx, check_feasibility_after=False)
                 self.update_path(new_v_path, dv_idx, pv_idx, check_feasibility_after=self.safe_mode)
                 if not repair_mode:
-                    after = self.total_violation()
+                    after = self.total_demand_violation()
                     sa = self.fitness_score(0)
 
                     # print(f'self: {self}. violation: {before} -> {after} (expected {reduced_violations[action,idx]}). Score: {sb:.4} -> {sa:.4}. (Expected {deltas[action,idx]:.4}). Action idx is {action,idx} and u is {u}')
@@ -517,25 +514,30 @@ class Individual():
                         break
 
 
-    def total_violation(self):
-        L = []
+    def total_demand_violation(self):
+        total = 0
         for (d_idx, p_idx), demand in self.caps.items():
             supply = self.X[d_idx, 2]
-            L.append(max(0, demand - supply))
-        return np.sum(L)
+            total += max(0, demand - supply)
+        return total
 
+    def total_duration_violation(self):
+        total = 0
+        for (d_idx, p_idx), cost in self.costs.items():
+            total += int(cost > self.durations[d_idx])
+        return total
 
     def repair(self):
         if self.average_capacity_infeasibility() == 0:
             return
-        step1 = self.total_violation()
-        self.RI(penalty_multiplier=1, repair_mode=True, repair_multiplier=5)
-        if self.total_violation() == 0:
+        step1 = self.total_demand_violation()
+        self.RI(supply_penalty=1, repair_mode=True, repair_multiplier=5)
+        if self.total_demand_violation() == 0:
             return
-        step2 = self.total_violation()
-        self.RI(penalty_multiplier=10, repair_mode=True, repair_multiplier=10)
-        if self.total_violation() == 0:
-            self.RI(penalty_multiplier=1000, repair_mode=True, repair_multiplier=10)
+        step2 = self.total_demand_violation()
+        self.RI(supply_penalty=10, repair_mode=True, repair_multiplier=10)
+        if self.total_demand_violation() == 0:
+            self.RI(supply_penalty=1000, repair_mode=True, repair_multiplier=10)
         # b = step1 >= step2 >= step3
         # b = '[y]yes' if b else '[r]no'
         # utils.cprint(f'{b}, [w]{step1}, {step2}, {step3}')
@@ -667,6 +669,9 @@ class Individual():
         n_entries = self.X[:, 0].shape[0]
         n_customers = n_entries - len(self.depots)
         if not len(L) == n_customers:
+            U = np.unique(L)
+            L = np.array(L)
+            D = np.setdiff1d(np.arange(n_customers), U)
             import ipdb; ipdb.set_trace()
             return False
         if len(L) != len(np.unique(L)):
