@@ -137,7 +137,7 @@ class MDVRPModel():
         if child.average_capacity_infeasibility() > 0 and np.random.choice((0,1)):
             child.repair()
         
-        if child.total_duration_violation() > 0 and np.random.choice((0, 1)):
+        if child.durations is not None and child.total_duration_violation() > 0 and np.random.choice((0, 1)):
             child.repair_duration()
 
         if np.random.choice((0, 1), p=(0.2, 0.8)) == 1:
@@ -398,7 +398,10 @@ class MDVRPModel():
         best_individual = self.population[scores.argmin()]
         best_fit = best_individual.fitness_score(0)
         demand_feasibility = best_individual.total_demand_violation()
-        duration_feasibility = best_individual.total_duration_violation()
+        if best_individual.durations is not None:
+            duration_feasibility = best_individual.total_duration_violation()
+        else:
+            duration_feasibility = 0
 
         if ax is None and len(plt.get_fignums()) == 0:
             fig, (ax0, ax1) = plt.subplots(1, 2)

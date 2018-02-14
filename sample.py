@@ -31,7 +31,12 @@ class Individual():
         self.N = N
         self.D = D
         self.depots = depots
-        self.durations = durations
+
+        duration_values = list(durations.values())
+        if max(duration_values) == min(duration_values) == np.iinfo(np.int64).max:
+            self.durations = None
+        else:
+            self.durations = durations
 
         self.safe_mode = True
 
@@ -145,7 +150,10 @@ class Individual():
     def fitness_score(self, demand_penalty=0, duration_penalty=0):
         total_path_cost = sum(list(self.costs.values()))
 
-        t_dur = self.total_duration_violation()
+        if self.durations is not None:
+            t_dur = self.total_duration_violation()
+        else:
+            t_dur = 0
         t_dem = self.total_demand_violation()
 
         return (total_path_cost +
@@ -323,7 +331,24 @@ class Individual():
                     penalty = np.clip(-reduced_violations, 0, 10000)
                     scores = deltas + penalty * supply_penalty
 
+                if self.durations is not None:
+                    V_durations = np.array([self.durations[d_idx] for d_idx in self.assignment_info[V, 0]], np.int64)
+                    V_costs = []
+                    for d_idx, p_idx in self.assignment_info[V, :2]:
+                        V_costs.append(self.costs[d_idx,p_idx])
+                    V_costs = np.array(V_costs, np.int64)
+                    mask = (V_costs <= V_durations) & ((V_costs + deltas) > V_durations)
+                    duration_penalty = mask.astype(int)
+
+                    mask = (V_costs > V_durations) & ((V_costs + deltas) <= V_durations)
+                    duration_bonus = mask.astype(int)
+                    if duration_penalty.any():
+                        scores += duration_penalty * scores[scores != np.inf].mean()
+                    # if duration_bonus.any():
+                    #     scores -= duration_bonus * 100
+
                 action, idx = np.unravel_index(scores.argmin(), scores.shape)
+                # print(self, self.total_duration_violation(), scores[action,idx])
                 if scores[action, idx] >= -1e-08:
                     run = False
                     break
@@ -531,17 +556,12 @@ class Individual():
     def repair(self):
         if self.average_capacity_infeasibility() == 0:
             return
-        step1 = self.total_demand_violation()
         self.RI(supply_penalty=1, repair_mode=True, repair_multiplier=5)
         if self.total_demand_violation() == 0:
             return
-        step2 = self.total_demand_violation()
         self.RI(supply_penalty=10, repair_mode=True, repair_multiplier=10)
         if self.total_demand_violation() == 0:
             self.RI(supply_penalty=1000, repair_mode=True, repair_multiplier=10)
-        # b = step1 >= step2 >= step3
-        # b = '[y]yes' if b else '[r]no'
-        # utils.cprint(f'{b}, [w]{step1}, {step2}, {step3}')
         if self.average_capacity_infeasibility() == 0:
             pass
 
@@ -550,34 +570,67 @@ class Individual():
         ad-hoc function that tries to repair duration for paths
         '''
 
+        self.is_feasible()
         D = self.D
-        bef = self.total_duration_violation()
+
+        for d_idx in self.depots:
+            free_paths = [i for i, each in enumerate(self.paths[d_idx]) if len(each) == 0]
+            costs = np.array([self.costs[d_idx, p_idx]
+                              for p_idx in range(self.n_paths_per_depot) ], np.int64)
+            if costs.max() <= self.durations[d_idx]:
+                continue
+            if free_paths:
+                p_idx = np.argmax(costs)
+                path = self.paths[d_idx][p_idx]
+                new_path_1 = path[:len(path)//2]
+                new_path_2 = path[len(path)//2:]
+                def wr(p):
+                    return self.cost(np.hstack((d_idx, p, d_idx)))
+                # print(free_paths, self.durations[d_idx], wr(path), wr(new_path_1), wr(new_path_2))
+                # import ipdb; ipdb.set_trace()
+                self.update_path(new_path_1, d_idx, p_idx, check_feasibility_after=False)
+                self.update_path(new_path_2, d_idx, free_paths[0], check_feasibility_after=True)
+
         for p, cost, _, d_idx, p_idx in self.iter_paths(yield_depot_idx=True, yield_path_idx=True):
             if self.durations[d_idx] < cost:
                 excess = cost - self.durations[d_idx]
-                path = self.paths[d_idx][p_idx]
-                path_with_depot = np.hstack((d_idx, path, d_idx))
-                pwd = path_with_depot
-                delta = -D[pwd[:-2],path] - D[path,pwd[2:]] + D[pwd[:-2],pwd[2:]]
 
-                # True in mask indicates that we will get rid of infeasibility for this route
-                mask = delta + excess < 0
-                if not np.any(mask):
-                    idx = np.argmin(delta)
-                    customer = path[idx]
-                else:
-                    idx = np.random.choice(np.argwhere(mask).flatten())
-                    customer = path[idx]
-                d_cands = self.depots[self.depots != d_idx]
-                self.move_customer(customer, depot_id=d_cands)
+                while excess >= 0:
+                    old = excess
+                    excess = self.costs[d_idx,p_idx] - self.durations[d_idx]
+                    if excess <= 0:
+                        break
 
-        aft = self.total_duration_violation()
-        # import ipdb; ipdb.set_trace()
+                    # print(d_idx, p_idx, excess)
+                    path = self.paths[d_idx][p_idx]
+                    path_with_depot = np.hstack((d_idx, path, d_idx))
+                    pwd = path_with_depot
+                    delta = -D[pwd[:-2],path] - D[path,pwd[2:]] + D[pwd[:-2],pwd[2:]]
+
+                    # True in mask indicates that we will get rid of infeasibility for this route
+                    mask = delta + excess < 0
+                    if not np.any(mask):
+                        idx = np.argmin(delta)
+                        customer = path[idx]
+                    else:
+                        idx = np.random.choice(np.argwhere(mask).flatten())
+                        customer = path[idx]
+                    d_cands = self.depots[self.depots != d_idx]
+                    def wr(p):
+                        return self.cost(np.hstack((d_idx, p, d_idx)))
+                    self.move_customer(customer, repair_mode=True)
 
 
-
-
-    
+    def minor_modificatios_in_the_end_i_promise(self):
+        while True:
+            violations = self.total_duration_violation(), self.total_demand_violation()
+            print(violations)
+            if violations == (0, 0):
+                return
+            self.repair()
+            self.repair_duration()
+            if np.random.choice((0, 1), p=(0.9, 0.1)):
+                self.RI()
 
     def iter_paths(self, depot_id=None, include_depot=False, yield_depot_idx=False, yield_path_idx=False):
         '''
@@ -632,7 +685,7 @@ class Individual():
                 for each in self.iter_paths(depot_id=d_idx, include_depot=include_depot, yield_depot_idx=yield_depot_idx, yield_path_idx=yield_path_idx):
                     yield each
 
-    def optimally_insert_customer(self, i, depot_id=None):
+    def optimally_insert_customer(self, i, depot_id=None, not_in=None, repair_mode=False):
         '''
         depot_id: int or list of ints
         '''
@@ -641,48 +694,79 @@ class Individual():
         if depot_id is not None:
             depot_id = np.array(depot_id, np.int64)
 
+        demand = self.X[i, 2]
         # just find a random path initially, but try to find closest path for i
         _, d_idx, p_idx = utils.choose_random_paths(self, depot_id=depot_id, include_indices=True, min_length=0)[0]
+        candidate_paths = []
+        candidate_paths.append((d_idx,p_idx))
         for k in range(self.N.shape[1]):
             neighbour_customer = self.N[i, k]
             x = self.find_customer(neighbour_customer)
             if x is not None:
+                if not_in is not None and x in not_in:
+                    continue
+                if repair_mode and (self.caps[x] + demand > self.X[d_idx, 2]):
+                    continue
                 if depot_id is None:
                     d_idx, p_idx = x
-                    break
+                    candidate_paths.append((d_idx, p_idx))
                 elif depot_id is not None and x[0] in depot_id:
                     d_idx, p_idx = x
-                    break
+                    candidate_paths.append((d_idx, p_idx))
 
-        P = np.hstack((d_idx, self.paths[d_idx][p_idx], d_idx))
+        candidate_paths = np.array(candidate_paths)
+        old_ = np.array(candidate_paths, copy=True)
+        # we want to preserve the order of `candidate_path` after taking out
+        # the unique elements
+        _, indices = np.unique(candidate_paths, axis=0, return_index=True)
+        candidate_paths = candidate_paths[indices]
         D = self.D
-        delta = D[P[:-1], i] + D[i, P[1:]] - D[P[:-1], P[1:]]
-        idx = np.argmin(delta)
-        # TODO: theres some bug here
-        new_path = np.hstack((P[:idx+1], i, P[idx+1:]))
+        L = []
+        for d_idx, p_idx in candidate_paths:
+            P = np.hstack((d_idx, self.paths[d_idx][p_idx], d_idx))
+            delta = D[P[:-1], i] + D[i, P[1:]] - D[P[:-1], P[1:]]
+            idx = np.argmin(delta)
+            delta_cost = delta[idx]
+            score = delta_cost
+            if self.durations is not None:
+                if self.caps[d_idx,p_idx] + self.X[i,2] <= self.X[d_idx, 2]:
+                    score -= 500
+                if (self.costs[d_idx,p_idx] < self.durations[d_idx]) and ((self.costs[d_idx,p_idx] + delta_cost) > self.durations[d_idx]):
+                    score += 1000
+                if (self.costs[d_idx,p_idx] < self.durations[d_idx]) and ((self.costs[d_idx,p_idx] + delta_cost) <= self.durations[d_idx]):
+                    score -= 1000
+
+            new_path = np.hstack((P[:idx+1], i, P[idx+1:]))
+            L.append((d_idx, p_idx, new_path, score))
+
+        d_idx, p_idx, new_path, score = min(L, key=lambda x: x[3])
+            # TODO: theres some bug here
         if len(new_path) > 3 and len(np.unique(new_path[1:-1])) != len(new_path[1:-1]):
             import ipdb; ipdb.set_trace()
-        # import ipdb; ipdb.set_trace()
+        bef = self.costs[d_idx,p_idx]
         self.update_path(new_path, d_idx, p_idx)
+        aft=self.costs[d_idx,p_idx]
         return
 
-    def delete_customer(self, i):
+    def delete_customer(self, i, return_indices=False):
         d_idx, p_idx = self.find_customer(i)
         path_with_customer = self.paths[d_idx][p_idx]
         path_without_customer = utils.delete_by_value(self.paths[d_idx][p_idx], i)
         self.update_path(path_without_customer, d_idx, p_idx, check_feasibility_after=False)
+        if return_indices:
+            return d_idx, p_idx
 
 
-    def move_customer(self, i, depot_id=None, strategy='best'):
+    def move_customer(self, i, depot_id=None, strategy='best', repair_mode=False):
         '''
         i: the index of the customer
         strategy: 'best'|'random'
         depot_id: int or list
         '''
 
-        self.delete_customer(i)
+        d_idx, p_idx = self.delete_customer(i, return_indices=True)
         # self.optimally_insert_customer(i, depot_id=depot_id)
-        self.optimally_insert_customer(i)
+        self.optimally_insert_customer(i, not_in=[(d_idx, p_idx)], repair_mode=repair_mode)
 
         # d_idx, p_idx = self.find_customer(i)
         # self.insert_customer(d_idx, p_idx)
@@ -765,3 +849,25 @@ class Individual():
             ax.set_title(title)
         pass
 
+    def describe(self, disco_mode=False):
+        print(self.fitness_score())
+        L = []
+        for p, c, cap, d_idx, p_idx in self.iter_paths(yield_depot_idx=True, yield_path_idx=True):
+            L.append((p, c, cap, d_idx, p_idx))
+        L = sorted(L, key=lambda x: (x[3], x[4]))
+
+        for p, c, cap, d_idx, p_idx in L:
+            if c == 0:  # not a path
+                continue
+            d_idx = d_idx - self.depots[0] + 1
+            p_idx = p_idx + 1
+            
+            p = ' '.join([f'{e:3}' for e in np.hstack((0, p, 0))])
+            print_args = [f'{d_idx:3}', f'{p_idx:3}', f'{float(c):10.5}', p]
+            if disco_mode:
+                for i, each in enumerate(print_args):
+                    c = np.random.choice(('r g b c m y w').split())
+                    print_args[i] = f'[{c}]{each}'
+                utils.cprint(' '.join(print_args))
+            else:
+                print(*print_args)

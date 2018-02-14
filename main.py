@@ -2,7 +2,7 @@
 #                       Ex 1 in bio-inspired
 #                       August Holm & Mikael Kvalvaer
 #######################################################################
-
+import copy
 import loader
 import numpy as np  # noqa
 from model import MDVRPModel
@@ -12,11 +12,10 @@ import matplotlib.pyplot as plt
 import parser as configparser
 plt.ion()
 
-filename = 'data/problem/p20'
+filename = 'data/problem/p08'
 solution_file = 'data/solution/' + filename.split('/')[2] + '.res'
 
 '''
-
   puzzle    optimal     achieved    comments
   01:       576         580         700 iterations (595 in 100 iterations)
   02:       473         491         (200 iterations)
@@ -43,10 +42,14 @@ else:
 
 model = MDVRPModel(customers, depots, durations, n_paths_per_depot, conf)
 optimal_solution = utils.visualize_solution(model, solution_file)
+model.evolve(1)
 
-model.evolve(3)
-one = model.population[0]  # debug
+# run me in order to get the best individual
+best = min(model.population, key=lambda x: x.fitness_score())
 
+# run me in order to get feasible solution, hopefully
+best.minor_modificatios_in_the_end_i_promise()
 
-L = [each.fitness_score() for each in model.population]
-best = model.population[np.argmin(L)]
+# run me in order to plot this shit yeee
+best.visualize(ax=ax0)
+best.describe(disco_mode=True)
