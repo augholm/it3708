@@ -38,6 +38,7 @@ class MDVRPModel():
         self.best_score = np.inf
         self.best_count = 0
         self.mean_violations = []
+        self.best_feasible = None
 
         self.demand_penalty = 1
         self.duration_penalty = 10
@@ -242,96 +243,10 @@ class MDVRPModel():
         functions = [split]
         call = np.random.choice(functions)
         call()
-    ###def mutation(self, individual, intra_depot):
-    ###    i = individual
-    ###    p, d_idx, p_idx = utils.choose_random_paths(i, min_length=3, include_indices=True, include_depot=False)[0]
-    ###    if p[0] == p[-1]:
-    ###        import ipdb; ipdb.set_trace()
-
-    ###    def split():
-    ###        '''
-    ###        TODO: alow for more than two paths to be "merged"
-    ###        '''
-    ###        d_idx = np.random.choice(self.depots)
-    ###        (p1, _, p1_idx), (p2, _, p2_idx) = utils.choose_random_paths(
-    ###            i, n=2, min_length=0, include_indices=True, depot_id=d_idx)
-
-    ###        if len(p1) == 0 and len(p2) == 0:
-    ###            return
-
-    ###        big_tour = np.concatenate(([d_idx], p1, p2))
-    ###        X = self.X[big_tour, :2]
-    ###        Q = self.X[big_tour, 2][1:]
-    ###        capacity = self.X[d_idx, 2]
-    ###        paths, cost = optimization.split(X, Q, capacity, input_args_check=True)
-
-    ###        if len(paths) > 2:
-    ###            return
-
-    ###        new_paths = []
-    ###        new_paths_with_depots = []
-    ###        for each in paths:
-    ###            new_paths.append(big_tour[each])
-    ###            new_paths_with_depots.append(np.hstack((d_idx, big_tour[each], d_idx)))
-
-    ###        cost = sum([i.cost(each) for each in new_paths_with_depots])
-
-    ###        if cost < i.costs[d_idx, p1_idx] + i.costs[d_idx, p2_idx]:
-    ###            if len(new_paths) == 1:
-    ###                i.update_path(new_paths[0], d_idx, p1_idx, check_feasibility_after=False)
-    ###                i.update_path(np.array([], np.int64), d_idx, p2_idx, check_feasibility_after=False)
-    ###            elif len(new_paths) == 2:
-    ###                i.update_path(new_paths[0], d_idx, p1_idx, check_feasibility_after=False)
-    ###                i.update_path(new_paths[1], d_idx, p2_idx, check_feasibility_after=i.safe_mode)
-
-    ###        if i.safe_mode:
-    ###            i.is_feasible()
-
-    ###    def reversal(p, d_idx, p_idx):
-    ###        a, b = np.random.choice(range(len(p)), 2, replace=False)
-    ###        a, b = min(a, b), max(a, b)
-    ###        p[a:b] = p[a:b][::-1]
-
-    ###        i.update_path(p, d_idx, p_idx)
-
-    ###    def tsp(path, d_idx, p_idx):
-    ###        p_with_depot = np.hstack((d_idx, path, d_idx))
-    ###        new_path = i.solve_tsp(p_with_depot)
-    ###        if i.cost(p_with_depot) - 2 > i.cost(new_path):
-    ###            i.update_path(new_path, d_idx, p_idx)
-
-    ###    def single_customer_rerouting(path, d_idx, p_idx):
-    ###        i.move_customer(np.random.choice(path), depot_id=None if intra_depot else d_idx)
-
-    ###    def improvement():
-    ###        individual.route_improvement(penalty=self.demand_penalty)
-
-    ###    def swap(path, d_idx, p_idx):
-    ###        try:
-    ###            if intra_depot:
-    ###                d_idx = np.random.choice(i.depots)
-    ###                x = utils.choose_random_paths(i, n=2, min_length=1, depot_id=d_idx, include_indices=True, include_depot=False)
-    ###            else:
-    ###                x = utils.choose_random_paths(i, n=2, min_length=3, include_indices=True, include_depot=False)
-    ###        except utils.NoPathFoundException:
-    ###            # utils.cprint('[y]warning: no path found; returning in swap mutation')
-    ###            return
-
-
-    ###        p1, d1_idx, p1_idx = x[0]
-    ###        p2, d2_idx, p2_idx = x[1]
-    ###        i.move_customer(np.random.choice(p1), depot_id=d2_idx)
-    ###        i.move_customer(np.random.choice(p2), depot_id=d1_idx)
-
-    ###    # functions = [single_customer_rerouting, lambda x,y,z: improvement()]
-    ###    functions = [split]
-    ###    call = np.random.choice(functions)
-    ###    call()
 
     def run_one_step(self, generation_step):
         population_size = utils.profile_value(self.conf['population_profile'], generation_step, self.conf['num_generations'])
         n_children = max(1, int(self.conf['birth_rate'] * population_size))
-        intra_depot = False if generation_step % self.conf['extra_depot_every'] == 0 else True
 
         L = []
         for _ in range(n_children):
@@ -342,7 +257,6 @@ class MDVRPModel():
 
             p1, p2 = np.random.choice(pool, 2, replace=False)
             offspring = self.create_offspring(p1, p2)
-            offspring.is_feasible(1)
             L.append(offspring)
 
         L = np.concatenate((L, self.population))
@@ -384,8 +298,14 @@ class MDVRPModel():
             self.population = np.concatenate((old_population, new_population))
             self.best_count = 0
         else:
-            # ipdb.set_trace()
             self.population = L[scores[:population_size]]
+
+        for each in self.population:
+            total_duration = 0 if each.durations is None else each.total_duration_violation()
+            if (total_duration, each.total_demand_violation()) == (0, 0):
+                if self.best_feasible is None or self.best_feasible.fitness_score() > each.fitness_score():
+                    print('found new best feasible')
+                    self.best_feasible = each
 
     def evolve(self, visualize_every=None):
         for t in range(1, self.conf['num_generations'] + 1):
@@ -394,7 +314,7 @@ class MDVRPModel():
                 self.visualize(t)
 
     def visualize(self, step, ax=None):
-        scores = np.array([each.fitness_score(self.demand_penalty, self.duration_penalty) for each in self.population])
+        scores = np.array([each.fitness_score(self.demand_penalty, self.duration_penalty) for each in self.population])  # noqa
         best_individual = self.population[scores.argmin()]
         best_fit = best_individual.fitness_score(0)
         demand_feasibility = best_individual.total_demand_violation()
@@ -411,6 +331,5 @@ class MDVRPModel():
         best_individual.visualize(ax=ax0, title=f'best fit ({best_fit:6.2f})')
         bs = best_individual.fitness_score(0, 0)
 
-        utils.cprint(f'step [y]{step}[w], best score: [y]{bs:.5}[w] {demand_feasibility, duration_feasibility}')
-        # utils.cprint(f'step [y]{step}[w], best score: [y]{bs{:5.}} ({demand_feasibility}, {duration_feasibility})[w] mean score: [y]{scores.mean():.5}. [w]Penalty multiplier is[y] {float(self.demand_penalty):.3}')  # noqa
+        utils.cprint(f'step [y]{step}[w], best score: [y]{bs:.5}[w] {demand_feasibility, duration_feasibility}')  # noqa
         plt.pause(0.05)

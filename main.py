@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import parser as configparser
 plt.ion()
 
-filename = 'data/problem/p08'
+filename = 'data/problem/p04'
 solution_file = 'data/solution/' + filename.split('/')[2] + '.res'
 
 '''

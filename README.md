@@ -1,2 +1,5 @@
-# it3708
-Bio-inspired AI
+to run: load main and have fun.
+
+Remember to install the files in requirements.txt first!
+
+:)

@@ -38,7 +38,7 @@ class Individual():
         else:
             self.durations = durations
 
-        self.safe_mode = True
+        self.safe_mode = False
 
         self.n_customers = self.X.shape[0] - self.depots.shape[0]
         self.n_paths_per_depot = n_paths_per_depot
@@ -397,7 +397,6 @@ class Individual():
                 if not repair_mode:
                     before = self.total_demand_violation()
                     sb = self.fitness_score(0)
-                self.is_feasible(1)
 
                 self.update_path(new_u_path, du_idx, pu_idx, check_feasibility_after=False)
                 self.update_path(new_v_path, dv_idx, pv_idx, check_feasibility_after=self.safe_mode)
@@ -570,7 +569,6 @@ class Individual():
         ad-hoc function that tries to repair duration for paths
         '''
 
-        self.is_feasible()
         D = self.D
 
         for d_idx in self.depots:
@@ -715,7 +713,7 @@ class Individual():
                     candidate_paths.append((d_idx, p_idx))
 
         candidate_paths = np.array(candidate_paths)
-        old_ = np.array(candidate_paths, copy=True)
+
         # we want to preserve the order of `candidate_path` after taking out
         # the unique elements
         _, indices = np.unique(candidate_paths, axis=0, return_index=True)
@@ -740,17 +738,13 @@ class Individual():
             L.append((d_idx, p_idx, new_path, score))
 
         d_idx, p_idx, new_path, score = min(L, key=lambda x: x[3])
-            # TODO: theres some bug here
         if len(new_path) > 3 and len(np.unique(new_path[1:-1])) != len(new_path[1:-1]):
             import ipdb; ipdb.set_trace()
-        bef = self.costs[d_idx,p_idx]
         self.update_path(new_path, d_idx, p_idx)
-        aft=self.costs[d_idx,p_idx]
         return
 
     def delete_customer(self, i, return_indices=False):
         d_idx, p_idx = self.find_customer(i)
-        path_with_customer = self.paths[d_idx][p_idx]
         path_without_customer = utils.delete_by_value(self.paths[d_idx][p_idx], i)
         self.update_path(path_without_customer, d_idx, p_idx, check_feasibility_after=False)
         if return_indices:
@@ -765,15 +759,7 @@ class Individual():
         '''
 
         d_idx, p_idx = self.delete_customer(i, return_indices=True)
-        # self.optimally_insert_customer(i, depot_id=depot_id)
         self.optimally_insert_customer(i, not_in=[(d_idx, p_idx)], repair_mode=repair_mode)
-
-        # d_idx, p_idx = self.find_customer(i)
-        # self.insert_customer(d_idx, p_idx)
-        # path_with_customer = self.paths[d_idx][p_idx]
-        # path_without_customer = utils.delete_by_value(self.paths[d_idx][p_idx], i)
-        # self.insert_customer(i, d_idx, p_idx)
-
 
     def average_capacity_infeasibility(self):
         L = []
@@ -850,15 +836,23 @@ class Individual():
         pass
 
     def describe(self, disco_mode=False):
+        '''
+        True beauty function.
+        '''
         print(self.fitness_score())
         L = []
         for p, c, cap, d_idx, p_idx in self.iter_paths(yield_depot_idx=True, yield_path_idx=True):
             L.append((p, c, cap, d_idx, p_idx))
         L = sorted(L, key=lambda x: (x[3], x[4]))
 
-        for p, c, cap, d_idx, p_idx in L:
+        for i, (p, c, cap, d_idx, _) in enumerate(L):
             if c == 0:  # not a path
                 continue
+            if i == 0:
+                p_idx = 0
+            elif d_idx != L[i-1][3]:
+                p_idx = 0
+
             d_idx = d_idx - self.depots[0] + 1
             p_idx = p_idx + 1
             
